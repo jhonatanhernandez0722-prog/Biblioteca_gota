@@ -1,15 +1,18 @@
-import { Search, X } from 'lucide-react'
+import { X } from 'lucide-react'
 import type { Metadata } from 'next'
 import Form from 'next/form'
 import Link from 'next/link'
 import { BookCard } from '@/components/books/BookCard'
 import { AutoSubmit, CollapseOnMobile } from '@/components/catalog/AutoSubmit'
+import { LiveSearch } from '@/components/catalog/LiveSearch'
+import { SyncedSelect } from '@/components/catalog/SyncedSelect'
 import { Pagination } from '@/components/ui/Pagination'
 import { languageName } from '@/lib/languages'
 import { isStaff } from '@/lib/status'
 import { getCurrentUser } from '@/server/auth/current-user'
-import { listCategories, listLanguages, searchBooks, type BookSort } from '@/server/catalog'
+import { listCategories, listLanguages, type BookSort } from '@/server/catalog'
 import { countCirculatedLoans } from '@/server/circulation'
+import { cachedCatalogSearch } from '@/server/search-cache'
 import styles from './explorar.module.css'
 
 export const metadata: Metadata = {
@@ -45,7 +48,7 @@ export default async function ExplorePage({ searchParams }: { searchParams: Sear
   const allowPopular = await countCirculatedLoans() >= 5
   const sort = SORT_PARAM[ordenParam] ?? (q ? 'relevance' : 'title')
 
-  const result = await searchBooks({
+  const { result, facets } = await cachedCatalogSearch({
     q,
     category: categoria,
     availability: disponible ? 'available' : undefined,
@@ -53,7 +56,11 @@ export default async function ExplorePage({ searchParams }: { searchParams: Sear
     sort: sort === 'popular' && !allowPopular ? 'title' : sort,
     page,
   })
-  const catalogTotal = (await searchBooks({ pageSize: 1 })).total
+  const catalogTotal = (await cachedCatalogSearch({ pageSize: 1 })).result.total
+  // Contadores dinámicos: cada opción dice cuántos libros quedarían si la eligieras.
+  const categoryCount = (slug: string) => facets.categories[slug] ?? 0
+  const languageCount = (code: string) => facets.languages[code] ?? 0
+  const narrowed = Boolean(q || categoria || disponible || idioma)
 
   const params = {
     q: q || undefined,
@@ -87,22 +94,14 @@ export default async function ExplorePage({ searchParams }: { searchParams: Sear
 
       <Form id="catalogo" action="/explorar" className={styles.layout}>
         <div className={styles.searchRow} role="search">
-          <label htmlFor="q" className="visually-hidden">
-            Buscar en el catálogo
-          </label>
-          <div className={styles.searchField}>
-            <Search aria-hidden="true" className={styles.searchIcon} />
-            <input
-              id="q"
-              name="q"
-              type="search"
-              defaultValue={q}
-              className="input"
-              placeholder="Título, autor, ISBN o tema"
-              autoComplete="off"
-              enterKeyHint="search"
-            />
-          </div>
+          <LiveSearch
+            formId="catalogo"
+            defaultValue={q}
+            label="Buscar en el catálogo"
+            placeholder="Título, autor, ISBN o tema"
+            className={styles.searchField}
+            iconClassName={styles.searchIcon}
+          />
           <button type="submit" className="btn">
             Buscar
           </button>
@@ -117,11 +116,23 @@ export default async function ExplorePage({ searchParams }: { searchParams: Sear
               <legend>Disponibilidad</legend>
               <label className="check">
                 <input type="radio" name="disponibilidad" value="" defaultChecked={!disponible} />
-                Todos los libros
+                <span className={styles.option}>
+                  Todos los libros
+                  <span className={styles.optionCount}>{facets.availability.all}</span>
+                </span>
               </label>
-              <label className="check">
-                <input type="radio" name="disponibilidad" value="disponible" defaultChecked={disponible} />
-                Disponibles ahora
+              <label className="check" data-empty={!facets.availability.available && !disponible}>
+                <input
+                  type="radio"
+                  name="disponibilidad"
+                  value="disponible"
+                  defaultChecked={disponible}
+                  disabled={!facets.availability.available && !disponible}
+                />
+                <span className={styles.option}>
+                  Disponibles ahora
+                  <span className={styles.optionCount}>{facets.availability.available}</span>
+                </span>
               </label>
             </fieldset>
 
@@ -131,15 +142,28 @@ export default async function ExplorePage({ searchParams }: { searchParams: Sear
                 <input type="radio" name="categoria" value="" defaultChecked={!categoria} />
                 Todas
               </label>
-              {categories.map((c) => (
-                <label key={c.slug} className="check">
-                  <input type="radio" name="categoria" value={c.slug} defaultChecked={categoria === c.slug} />
-                  <span className={styles.option}>
-                    {c.name}
-                    <span className={styles.optionCount}>{c.bookCount}</span>
-                  </span>
-                </label>
-              ))}
+              {categories.map((c) => {
+                const count = categoryCount(c.slug)
+                const empty = count === 0 && categoria !== c.slug
+                return (
+                  <label key={c.slug} className="check" data-empty={empty}>
+                    <input type="radio" name="categoria" value={c.slug} defaultChecked={categoria === c.slug} disabled={empty} />
+                    <span className={styles.option}>
+                      {c.name}
+                      <span className={styles.optionCount}>
+                        {narrowed && count !== c.bookCount ? (
+                          <>
+                            {count}
+                            <span className="visually-hidden"> de {c.bookCount}</span>
+                          </>
+                        ) : (
+                          count
+                        )}
+                      </span>
+                    </span>
+                  </label>
+                )
+              })}
             </fieldset>
 
             {languages.length > 1 ? (
@@ -149,15 +173,19 @@ export default async function ExplorePage({ searchParams }: { searchParams: Sear
                   <input type="radio" name="idioma" value="" defaultChecked={!idioma} />
                   Todos
                 </label>
-                {languages.map((l) => (
-                  <label key={l.code} className="check">
-                    <input type="radio" name="idioma" value={l.code} defaultChecked={idioma === l.code} />
-                    <span className={styles.option}>
-                      {languageName(l.code)}
-                      <span className={styles.optionCount}>{l.count}</span>
-                    </span>
-                  </label>
-                ))}
+                {languages.map((l) => {
+                  const count = languageCount(l.code)
+                  const empty = count === 0 && idioma !== l.code
+                  return (
+                    <label key={l.code} className="check" data-empty={empty}>
+                      <input type="radio" name="idioma" value={l.code} defaultChecked={idioma === l.code} disabled={empty} />
+                      <span className={styles.option}>
+                        {languageName(l.code)}
+                        <span className={styles.optionCount}>{count}</span>
+                      </span>
+                    </label>
+                  )
+                })}
               </fieldset>
             ) : null}
 
@@ -175,12 +203,12 @@ export default async function ExplorePage({ searchParams }: { searchParams: Sear
             </h2>
             <div className={styles.sort}>
               <label htmlFor="orden">Ordenar por</label>
-              <select id="orden" name="orden" className="select" defaultValue={ordenParam}>
+              <SyncedSelect id="orden" name="orden" className="select" value={ordenParam}>
                 {q ? <option value="relevancia">Relevancia</option> : null}
                 <option value="titulo">Título (A–Z)</option>
                 <option value="recientes">Llegadas recientes</option>
                 {allowPopular ? <option value="populares">Más pedidos</option> : null}
-              </select>
+              </SyncedSelect>
             </div>
           </div>
 

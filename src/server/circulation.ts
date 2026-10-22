@@ -1,6 +1,15 @@
 import { addDays, endOfLibraryDay, formatDate } from '@/lib/dates'
-import { LOAN_RULES } from '@/lib/rules'
-import type { CopyCondition, CopyStatus, LoanRecord, LoanStatus, ReservationRecord } from '@/lib/types'
+import { accruedFine, describeLate, formatCOP } from '@/lib/fines'
+import { FINE_RULES, isLoanPeriod, LOAN_RULES } from '@/lib/rules'
+import type {
+  CopyCondition,
+  CopyStatus,
+  FineRecord,
+  FineStatus,
+  LoanRecord,
+  LoanStatus,
+  ReservationRecord,
+} from '@/lib/types'
 import { logAudit } from './audit'
 import { getCopy, insertCopies } from './catalog'
 import { pendingConsents } from './consents'
@@ -8,11 +17,16 @@ import { all, get, now, run, transaction, type SqlValue } from './db'
 import { env } from './env'
 import { DomainError } from './errors'
 import { sendInBackground, type MailMessage } from './integrations/mail'
+import { addLoanCard, getReaderIdentity } from './users'
 
 /**
- * Circulación: solicitudes, préstamos, devoluciones, renovaciones y reservas.
+ * Circulación: solicitudes, préstamos, devoluciones, multas y reservas.
  * Cada operación valida permisos y reglas aquí, en el servidor, dentro de una
  * transacción. La interfaz solo refleja el resultado.
+ *
+ * El plazo de lectura lo elige el lector al pedir el libro y queda fijo: no hay
+ * renovaciones y la base de datos rechaza cualquier cambio del plazo o de la fecha
+ * de devolución (trigger `loans_term_locked`). Cada día de retraso genera una multa.
  */
 
 interface Actor {
@@ -48,6 +62,8 @@ interface LoanRow {
   returned_at: string | null
   renewals: number
   rejection_reason: string | null
+  loan_days: number
+  loan_card_number: string | null
   user_name: string
   user_email: string
   user_card: string
@@ -83,6 +99,8 @@ function toLoan(r: LoanRow): LoanRecord {
     returnedAt: r.returned_at,
     renewals: r.renewals,
     rejectionReason: r.rejection_reason,
+    loanDays: r.loan_days,
+    loanCardNumber: r.loan_card_number,
   }
 }
 
@@ -124,6 +142,7 @@ interface ReservationRow {
   cover_color: string | null
   authors: string | null
   position: number | null
+  loan_days: number
 }
 
 function toReservation(r: ReservationRow): ReservationRecord {
@@ -141,6 +160,7 @@ function toReservation(r: ReservationRow): ReservationRecord {
     coverColor: r.cover_color,
     createdAt: r.created_at,
     position: r.position,
+    loanDays: r.loan_days,
   }
 }
 
@@ -183,7 +203,9 @@ export async function getBookCirculation(bookId: number) {
 }
 
 /** Lector: ¿puede pedir libros ahora mismo? Devuelve el motivo si no. */
-export async function getReaderEligibility(userId: number): Promise<{ canRequest: boolean; reason?: string }> {
+export async function getReaderEligibility(
+  userId: number,
+): Promise<{ canRequest: boolean; reason?: string; missingIdentity?: boolean }> {
   const user = await get<{ status: string }>('SELECT status FROM users WHERE id = ?', [userId])
   if (!user || user.status !== 'active') {
     return { canRequest: false, reason: 'Tu cuenta está suspendida. Escríbenos para revisarla.' }
@@ -195,8 +217,23 @@ export async function getReaderEligibility(userId: number): Promise<{ canRequest
         'Para pedir libros necesitas aceptar la versión vigente de los términos y autorizar el tratamiento de tus datos. Puedes hacerlo en «Mis préstamos».',
     }
   }
+  if (!(await getReaderIdentity(userId)).complete) {
+    return {
+      canRequest: false,
+      reason:
+        'Para pedir libros necesitamos tu teléfono, tu documento de identidad (CC o TI) y una tarjeta de crédito. Complétalos en «Mi perfil».',
+      missingIdentity: true,
+    }
+  }
   if (await countOverdue(userId) > 0) {
     return { canRequest: false, reason: 'Tienes un préstamo vencido. Devuélvelo para poder pedir otro libro.' }
+  }
+  const owed = await pendingFineTotal(userId)
+  if (owed > 0) {
+    return {
+      canRequest: false,
+      reason: `Tienes multas pendientes por ${formatCOP(owed)}. Págalas en el mostrador para volver a pedir libros.`,
+    }
   }
   if (await countActiveLoans(userId) >= LOAN_RULES.maxActiveLoans) {
     return {
@@ -235,12 +272,55 @@ async function freeCopies(bookId: number): Promise<number> {
   return Math.max(0, available - pending)
 }
 
+async function pendingFineTotal(userId: number): Promise<number> {
+  return (
+    (await get<{ n: number }>(`SELECT COALESCE(SUM(amount), 0) AS n FROM fines WHERE user_id = ? AND status = 'pending'`, [userId]))
+      ?.n ?? 0
+  )
+}
+
 function pickupDeadline(): string {
   return endOfLibraryDay(addDays(new Date(), LOAN_RULES.pickupDays)).toISOString()
 }
 
-function dueDateFrom(base: Date): string {
-  return endOfLibraryDay(addDays(base, LOAN_RULES.loanDays)).toISOString()
+function dueDateFrom(base: Date, days: number): string {
+  return endOfLibraryDay(addDays(base, days)).toISOString()
+}
+
+/** Lo que el lector confirma al pedir o reservar: el plazo de lectura y el carné. */
+export interface LoanRequestOptions {
+  /** Uno de LOAN_RULES.loanPeriods. Sin valor, el plazo por defecto. */
+  loanDays?: number
+  /** Un carné ya registrado en la cuenta… */
+  cardId?: number
+  /** …o un número escrito a mano (se registra en la cuenta si es nuevo). Sin ninguno, el carné principal. */
+  cardNumber?: string
+}
+
+async function resolveRequestOptions(userId: number, options: LoanRequestOptions) {
+  const loanDays = options.loanDays ?? LOAN_RULES.defaultLoanDays
+  if (!isLoanPeriod(loanDays)) {
+    throw new DomainError(`Elige un plazo de lectura de ${LOAN_RULES.loanPeriods.join(', ')} días.`, 'invalid_period', {
+      loanDays: 'Elige uno de los plazos disponibles.',
+    })
+  }
+  let card: { id: number; number: string } | undefined
+  if (options.cardNumber?.trim()) {
+    card = await addLoanCard(userId, options.cardNumber)
+  } else if (options.cardId) {
+    card = await get<{ id: number; number: string }>('SELECT id, number FROM loan_cards WHERE id = ? AND user_id = ?', [
+      options.cardId,
+      userId,
+    ])
+    if (!card) {
+      throw new DomainError('Ese carné no está en tu cuenta. Elige otro o escribe el número.', 'invalid_card', {
+        cardId: 'Elige uno de tus carnés.',
+      })
+    }
+  } else {
+    card = await get<{ id: number; number: string }>('SELECT id, number FROM loan_cards WHERE user_id = ? AND is_primary', [userId])
+  }
+  return { loanDays, card: card ?? null }
 }
 
 async function bookTitle(bookId: number): Promise<string> {
@@ -272,9 +352,10 @@ async function releaseCopy(copyId: number, actorId: number | null, effects: Effe
     copyId,
   ])
   if (!copy) return
-  const queue = await all<{ id: number; user_id: number; created_at: string }>(
-    `SELECT id, user_id, created_at FROM reservations
-      WHERE book_id = ? AND status = 'waiting' ORDER BY created_at, id`,
+  const queue = await all<{ id: number; user_id: number; created_at: string; loan_days: number; loan_card_id: number | null; card_number: string | null }>(
+    `SELECT r.id, r.user_id, r.created_at, r.loan_days, r.loan_card_id, lc.number AS card_number
+       FROM reservations r LEFT JOIN loan_cards lc ON lc.id = r.loan_card_id
+      WHERE r.book_id = ? AND r.status = 'waiting' ORDER BY r.created_at, r.id`,
     [copy.book_id],
   )
   for (const reservation of queue) {
@@ -291,10 +372,22 @@ async function releaseCopy(copyId: number, actorId: number | null, effects: Effe
       continue
     }
     const deadline = pickupDeadline()
+    // El plazo y el carné son los que el lector confirmó al reservar.
     const { lastInsertRowid: loanId } = await run(
-      `INSERT INTO loans (user_id, book_id, copy_id, status, decided_at, decided_by, pickup_deadline)
-       VALUES (?, ?, ?, 'approved', ?, ?, ?)`,
-      [reader.id, copy.book_id, copy.id, now(), actorId, deadline],
+      `INSERT INTO loans (user_id, book_id, copy_id, status, decided_at, decided_by, pickup_deadline,
+                          loan_days, loan_card_id, loan_card_number)
+       VALUES (?, ?, ?, 'approved', ?, ?, ?, ?, ?, ?)`,
+      [
+        reader.id,
+        copy.book_id,
+        copy.id,
+        now(),
+        actorId,
+        deadline,
+        reservation.loan_days,
+        reservation.loan_card_id,
+        reservation.card_number,
+      ],
     )
     await run(`UPDATE reservations SET status = 'fulfilled', loan_id = ?, updated_at = ? WHERE id = ?`, [
       loanId,
@@ -329,15 +422,23 @@ async function loadLoanForUpdate(loanId: number) {
     copy_id: number | null
     status: LoanStatus
     due_at: string | null
-    renewals: number
-  }>('SELECT id, user_id, book_id, copy_id, status, due_at, renewals FROM loans WHERE id = ?', [loanId])
+    loan_days: number
+  }>('SELECT id, user_id, book_id, copy_id, status, due_at, loan_days FROM loans WHERE id = ?', [loanId])
   if (!loan) throw new DomainError('Ese préstamo ya no existe.', 'not_found')
   return loan
 }
 
 /* ───────────────────────── Lector ───────────────────────── */
 
-export async function requestLoan(userId: number, bookId: number): Promise<{ loanId: number }> {
+/**
+ * El lector confirma la solicitud con un plazo de lectura y un carné. Desde este momento
+ * el plazo es definitivo: la fecha de devolución será la entrega + `loanDays` días.
+ */
+export async function requestLoan(
+  userId: number,
+  bookId: number,
+  options: LoanRequestOptions = {},
+): Promise<{ loanId: number; loanDays: number; cardNumber: string | null }> {
   return await transaction(async () => {
     const eligibility = await getReaderEligibility(userId)
     if (!eligibility.canRequest) throw new DomainError(eligibility.reason!, 'not_eligible')
@@ -356,27 +457,33 @@ export async function requestLoan(userId: number, bookId: number): Promise<{ loa
         'no_copies',
       )
     }
+    const { loanDays, card } = await resolveRequestOptions(userId, options)
     await run(`UPDATE reservations SET status = 'cancelled', updated_at = ? WHERE user_id = ? AND book_id = ? AND status = 'waiting'`, [
       now(),
       userId,
       bookId,
     ])
-    const { lastInsertRowid: loanId } = await run(`INSERT INTO loans (user_id, book_id, status) VALUES (?, ?, 'pending')`, [
-      userId,
-      bookId,
-    ])
+    const { lastInsertRowid: loanId } = await run(
+      `INSERT INTO loans (user_id, book_id, status, loan_days, loan_card_id, loan_card_number) VALUES (?, ?, 'pending', ?, ?, ?)`,
+      [userId, bookId, loanDays, card?.id ?? null, card?.number ?? null],
+    )
     await logAudit({
       actorId: userId,
       action: 'loan.requested',
       entityType: 'loan',
       entityId: loanId,
-      summary: `Solicitó «${book.title}»`,
+      summary: `Solicitó «${book.title}» por ${loanDays} días${card ? ` con el carné ${card.number}` : ''}`,
+      details: { loanDays, card: card?.number ?? null },
     })
-    return { loanId }
+    return { loanId, loanDays, cardNumber: card?.number ?? null }
   })
 }
 
-export async function reserveBook(userId: number, bookId: number): Promise<{ reservationId: number; position: number }> {
+export async function reserveBook(
+  userId: number,
+  bookId: number,
+  options: LoanRequestOptions = {},
+): Promise<{ reservationId: number; position: number }> {
   return await transaction(async () => {
     const user = await get<{ status: string }>('SELECT status FROM users WHERE id = ?', [userId])
     if (!user || user.status !== 'active') {
@@ -384,6 +491,14 @@ export async function reserveBook(userId: number, bookId: number): Promise<{ res
     }
     if ((await pendingConsents(userId)).length) {
       throw new DomainError('Acepta la versión vigente de los términos y la autorización de datos en «Mis préstamos» para reservar.', 'not_eligible')
+    }
+    // Una reserva se convierte sola en préstamo: exige lo mismo que pedirlo.
+    if (!(await getReaderIdentity(userId)).complete) {
+      throw new DomainError('Completa tu teléfono, documento y tarjeta en «Mi perfil» para reservar.', 'not_eligible')
+    }
+    const owed = await pendingFineTotal(userId)
+    if (owed > 0) {
+      throw new DomainError(`Tienes multas pendientes por ${formatCOP(owed)}. Págalas en el mostrador para reservar.`, 'not_eligible')
     }
     const book = await get<{ id: number; title: string }>(`SELECT id, title FROM books WHERE id = ? AND status = 'active'`, [
       bookId,
@@ -418,10 +533,11 @@ export async function reserveBook(userId: number, bookId: number): Promise<{ res
         'limit',
       )
     }
-    const { lastInsertRowid: reservationId } = await run('INSERT INTO reservations (user_id, book_id) VALUES (?, ?)', [
-      userId,
-      bookId,
-    ])
+    const { loanDays, card } = await resolveRequestOptions(userId, options)
+    const { lastInsertRowid: reservationId } = await run(
+      'INSERT INTO reservations (user_id, book_id, loan_days, loan_card_id) VALUES (?, ?, ?, ?)',
+      [userId, bookId, loanDays, card?.id ?? null],
+    )
     const position =
       (await get<{ n: number }>(`SELECT COUNT(*) AS n FROM reservations WHERE book_id = ? AND status = 'waiting'`, [bookId]))
         ?.n ?? 1
@@ -479,41 +595,6 @@ export async function cancelLoan(actor: Actor, loanId: number) {
     })
   })
   runEffects(effects)
-}
-
-export async function renewLoan(actor: Actor, loanId: number): Promise<{ dueAt: string }> {
-  return await transaction(async () => {
-    const loan = await loadLoanForUpdate(loanId)
-    if (!actor.isStaff && loan.user_id !== actor.id) {
-      throw new DomainError('No puedes renovar el préstamo de otra persona.', 'forbidden')
-    }
-    if (loan.status !== 'checked_out' || !loan.due_at) {
-      throw new DomainError('Solo se pueden renovar libros que estén prestados.', 'invalid_state')
-    }
-    if (new Date(loan.due_at).getTime() < Date.now()) {
-      throw new DomainError('El préstamo ya venció y no se puede renovar. Devuélvelo en el mostrador.', 'overdue')
-    }
-    if (loan.renewals >= LOAN_RULES.maxRenewals) {
-      throw new DomainError(`Este préstamo ya usó sus ${LOAN_RULES.maxRenewals} renovaciones.`, 'limit')
-    }
-    const waiting =
-      (await get<{ n: number }>(`SELECT COUNT(*) AS n FROM reservations WHERE book_id = ? AND status = 'waiting'`, [
-        loan.book_id,
-      ]))?.n ?? 0
-    if (waiting > 0) {
-      throw new DomainError('Otra persona está esperando este libro, así que no se puede renovar.', 'reserved')
-    }
-    const dueAt = dueDateFrom(new Date(loan.due_at))
-    await run('UPDATE loans SET due_at = ?, renewals = renewals + 1, updated_at = ? WHERE id = ?', [dueAt, now(), loanId])
-    await logAudit({
-      actorId: actor.id,
-      action: 'loan.renewed',
-      entityType: 'loan',
-      entityId: loanId,
-      summary: `Renovó «${await bookTitle(loan.book_id)}» hasta el ${formatDate(dueAt)}`,
-    })
-    return { dueAt }
-  })
 }
 
 /* ───────────────────────── Personal de biblioteca ───────────────────────── */
@@ -627,7 +708,8 @@ export async function checkoutLoan(staffId: number, loanId: number): Promise<{ d
       throw new DomainError('Solo se pueden entregar solicitudes pendientes o ejemplares apartados.', 'invalid_state')
     }
     if (!copyId) throw new DomainError('La solicitud no tiene un ejemplar asignado.', 'invalid_state')
-    const dueAt = dueDateFrom(new Date())
+    // El plazo es el que el lector confirmó; a partir de aquí la fecha queda bloqueada.
+    const dueAt = dueDateFrom(new Date(), loan.loan_days)
     await run(`UPDATE copies SET status = 'on_loan', updated_at = ? WHERE id = ?`, [now(), copyId])
     await run(
       `UPDATE loans SET status = 'checked_out', checked_out_at = ?, checked_out_by = ?, due_at = ?, updated_at = ?
@@ -640,23 +722,51 @@ export async function checkoutLoan(staffId: number, loanId: number): Promise<{ d
       action: 'loan.checked_out',
       entityType: 'loan',
       entityId: loanId,
-      summary: `Entregó el ejemplar ${code} de «${await bookTitle(loan.book_id)}» (devolución: ${formatDate(dueAt)})`,
+      summary: `Entregó el ejemplar ${code} de «${await bookTitle(loan.book_id)}» por ${loan.loan_days} días (devolución: ${formatDate(dueAt)})`,
     })
     return { dueAt }
   })
 }
 
-export async function returnLoan(staffId: number, loanId: number, options: { toMaintenance?: boolean } = {}) {
+/**
+ * Devolución en el mostrador. Si llega tarde, se genera la multa por mora en la misma
+ * transacción: días naturales de retraso × tarifa diaria vigente.
+ */
+export async function returnLoan(
+  staffId: number,
+  loanId: number,
+  options: { toMaintenance?: boolean } = {},
+): Promise<{ fine: { days: number; amount: number } | null }> {
   const effects: Effect[] = []
-  await transaction(async () => {
+  const result = await transaction(async () => {
     const loan = await loadLoanForUpdate(loanId)
     if (loan.status !== 'checked_out') throw new DomainError('Ese libro no figura como prestado.', 'invalid_state')
+    const returnedAt = now()
     await run(`UPDATE loans SET status = 'returned', returned_at = ?, returned_by = ?, updated_at = ? WHERE id = ?`, [
-      now(),
+      returnedAt,
       staffId,
-      now(),
+      returnedAt,
       loanId,
     ])
+    const late = loan.due_at ? accruedFine(loan.due_at, returnedAt) : { days: 0, amount: 0 }
+    const title = await bookTitle(loan.book_id)
+    if (late.days > 0) {
+      const { lastInsertRowid: fineId } = await run(
+        `INSERT INTO fines (loan_id, user_id, days_late, daily_rate, amount, is_demo)
+         SELECT ?, ?, ?, ?, ?, is_demo FROM loans WHERE id = ?`,
+        [loanId, loan.user_id, late.days, FINE_RULES.dailyFine, late.amount, loanId],
+      )
+      await logAudit({
+        actorId: staffId,
+        action: 'fine.created',
+        entityType: 'fine',
+        entityId: fineId,
+        summary: `Multa de ${formatCOP(late.amount)} por ${describeLate(late.days)} en «${title}»`,
+        details: { loanId, days: late.days, dailyRate: FINE_RULES.dailyFine },
+      })
+      const reader = (await get<{ name: string; email: string }>('SELECT name, email FROM users WHERE id = ?', [loan.user_id]))!
+      effects.push(() => sendInBackground(fineMail(reader.email, reader.name, title, late.days, late.amount)))
+    }
     if (loan.copy_id) {
       if (options.toMaintenance) {
         await run(`UPDATE copies SET status = 'maintenance', updated_at = ? WHERE id = ?`, [now(), loan.copy_id])
@@ -669,10 +779,148 @@ export async function returnLoan(staffId: number, loanId: number, options: { toM
       action: 'loan.returned',
       entityType: 'loan',
       entityId: loanId,
-      summary: `Registró la devolución de «${await bookTitle(loan.book_id)}»${options.toMaintenance ? ' (a reparación)' : ''}`,
+      summary: `Registró la devolución de «${title}»${options.toMaintenance ? ' (a reparación)' : ''}`,
     })
+    return { fine: late.days > 0 ? late : null }
   })
   runEffects(effects)
+  return result
+}
+
+function fineMail(to: string, name: string, title: string, days: number, amount: number): MailMessage {
+  return {
+    to,
+    subject: `Multa por devolución tardía: ${title}`,
+    text: [
+      `Hola, ${name}:`,
+      '',
+      `Registramos la devolución de «${title}» con ${describeLate(days)}.`,
+      `Multa: ${days} × ${formatCOP(FINE_RULES.dailyFine)} = ${formatCOP(amount)}.`,
+      'Puedes pagarla en el mostrador. Mientras esté pendiente no podrás pedir otros libros.',
+      '',
+      `Consulta el detalle en ${env().APP_URL}/cuenta`,
+      '',
+      'Biblioteca Gota Gota',
+    ].join('\n'),
+  }
+}
+
+/* ───────────────────────── Multas ───────────────────────── */
+
+const FINE_SELECT = `
+  SELECT f.*, u.name AS user_name, u.card_number AS user_card, b.title AS book_title, b.slug AS book_slug,
+         l.due_at, l.returned_at
+    FROM fines f
+    JOIN loans l ON l.id = f.loan_id
+    JOIN users u ON u.id = f.user_id
+    JOIN books b ON b.id = l.book_id`
+
+interface FineRow {
+  id: number
+  loan_id: number
+  user_id: number
+  days_late: number
+  daily_rate: number
+  amount: number
+  status: FineStatus
+  created_at: string
+  settled_at: string | null
+  settle_note: string | null
+  user_name: string
+  user_card: string
+  book_title: string
+  book_slug: string
+  due_at: string
+  returned_at: string
+}
+
+function toFine(r: FineRow): FineRecord {
+  return {
+    id: r.id,
+    loanId: r.loan_id,
+    userId: r.user_id,
+    userName: r.user_name,
+    userCardNumber: r.user_card,
+    bookTitle: r.book_title,
+    bookSlug: r.book_slug,
+    dueAt: r.due_at,
+    returnedAt: r.returned_at,
+    daysLate: r.days_late,
+    dailyRate: r.daily_rate,
+    amount: r.amount,
+    status: r.status,
+    createdAt: r.created_at,
+    settledAt: r.settled_at,
+    settleNote: r.settle_note,
+  }
+}
+
+export async function listUserFines(userId: number): Promise<FineRecord[]> {
+  return (await all<FineRow>(`${FINE_SELECT} WHERE f.user_id = ? ORDER BY f.created_at DESC, f.id DESC`, [userId])).map(toFine)
+}
+
+/**
+ * Resumen de atrasos de un lector: multas ya generadas (pendientes) y lo que van
+ * sumando los préstamos vencidos que todavía no ha devuelto.
+ */
+export async function getUserFineSummary(userId: number, at = new Date()) {
+  const pending = await pendingFineTotal(userId)
+  const overdue = await all<{ id: number; due_at: string }>(
+    `SELECT id, due_at FROM loans WHERE user_id = ? AND status = 'checked_out' AND due_at < ?`,
+    [userId, at.toISOString()],
+  )
+  const accruing = overdue.reduce((sum, loan) => sum + accruedFine(loan.due_at, at).amount, 0)
+  return { pending, accruing, total: pending + accruing, overdueLoans: overdue.length }
+}
+
+export type StaffFineView = 'pending' | 'settled'
+
+export async function listStaffFines(options: { view: StaffFineView; q?: string; page: number; pageSize: number }) {
+  const params: Record<string, SqlValue> = {}
+  const where = [options.view === 'pending' ? `f.status = 'pending'` : `f.status IN ('paid','waived')`]
+  if (options.q?.trim()) {
+    where.push('(u.name LIKE :q OR u.email LIKE :q OR u.card_number LIKE :q OR b.title LIKE :q)')
+    params.q = `%${options.q.trim()}%`
+  }
+  const clause = `WHERE ${where.join(' AND ')}`
+  const from = `FROM fines f JOIN loans l ON l.id = f.loan_id JOIN users u ON u.id = f.user_id JOIN books b ON b.id = l.book_id`
+  const totals = await get<{ n: number; amount: number }>(`SELECT COUNT(*) AS n, COALESCE(SUM(f.amount), 0) AS amount ${from} ${clause}`, params)
+  const fines = (await all<FineRow>(
+    `${FINE_SELECT} ${clause} ORDER BY ${options.view === 'pending' ? 'f.created_at ASC' : 'f.settled_at DESC'}, f.id DESC
+      LIMIT :limit OFFSET :offset`,
+    { ...params, limit: options.pageSize, offset: (options.page - 1) * options.pageSize },
+  )).map(toFine)
+  return { fines, total: totals?.n ?? 0, amount: totals?.amount ?? 0 }
+}
+
+/** El personal registra el pago en el mostrador o condona la multa explicando el motivo. */
+export async function settleFine(staffId: number, fineId: number, outcome: 'paid' | 'waived', note?: string) {
+  const cleanNote = note?.trim().slice(0, 300) || null
+  if (outcome === 'waived' && (!cleanNote || cleanNote.length < 5)) {
+    throw new DomainError('Explica por qué se condona la multa (al menos 5 caracteres).', 'reason_required', {
+      reason: 'Escribe el motivo.',
+    })
+  }
+  await transaction(async () => {
+    const fine = await get<FineRow>(`${FINE_SELECT} WHERE f.id = ?`, [fineId])
+    if (!fine) throw new DomainError('Esa multa ya no existe.', 'not_found')
+    if (fine.status !== 'pending') throw new DomainError('Esa multa ya está saldada.', 'invalid_state')
+    await run(`UPDATE fines SET status = ?, settled_at = ?, settled_by = ?, settle_note = ? WHERE id = ?`, [
+      outcome,
+      now(),
+      staffId,
+      cleanNote,
+      fineId,
+    ])
+    await logAudit({
+      actorId: staffId,
+      action: outcome === 'paid' ? 'fine.paid' : 'fine.waived',
+      entityType: 'fine',
+      entityId: fineId,
+      summary: `${outcome === 'paid' ? 'Registró el pago de' : 'Condonó'} la multa de ${formatCOP(fine.amount)} de ${fine.user_name} («${fine.book_title}»)`,
+      details: cleanNote ? { note: cleanNote } : undefined,
+    })
+  })
 }
 
 /** Caduca los apartados que nadie recogió a tiempo y devuelve los ejemplares a la cola. */
@@ -799,16 +1047,17 @@ export async function listStaffLoans(options: { view: StaffLoanView; q?: string;
   return { loans, total }
 }
 
-export async function countStaffLoanViews(): Promise<Record<StaffLoanView | 'reservations', number>> {
+export async function countStaffLoanViews(): Promise<Record<StaffLoanView | 'reservations' | 'fines', number>> {
   const n = now()
   const count = async (sql: string, params: SqlValue[] = []) => (await get<{ n: number }>(sql, params))?.n ?? 0
-  const [requests, pickup, active, overdue, history, reservations] = await Promise.all([
+  const [requests, pickup, active, overdue, history, reservations, fines] = await Promise.all([
     count(`SELECT COUNT(*) AS n FROM loans WHERE status = 'pending'`),
     count(`SELECT COUNT(*) AS n FROM loans WHERE status = 'approved'`),
     count(`SELECT COUNT(*) AS n FROM loans WHERE status = 'checked_out' AND due_at >= ?`, [n]),
     count(`SELECT COUNT(*) AS n FROM loans WHERE status = 'checked_out' AND due_at < ?`, [n]),
     count(`SELECT COUNT(*) AS n FROM loans WHERE status IN ('returned','rejected','cancelled','expired')`),
     count(`SELECT COUNT(*) AS n FROM reservations WHERE status = 'waiting'`),
+    count(`SELECT COUNT(*) AS n FROM fines WHERE status = 'pending'`),
   ])
   return {
     requests,
@@ -817,6 +1066,7 @@ export async function countStaffLoanViews(): Promise<Record<StaffLoanView | 'res
     overdue,
     history,
     reservations,
+    fines,
   }
 }
 
@@ -864,6 +1114,7 @@ export async function getDashboardStats() {
     overdue,
     waitingReservations,
     readers,
+    pendingFines,
   ] = await Promise.all([
     count(`SELECT COUNT(*) AS n FROM books WHERE status = 'active'`),
     count(`SELECT COUNT(*) AS n FROM copies WHERE status NOT IN ('lost','withdrawn')`),
@@ -874,8 +1125,10 @@ export async function getDashboardStats() {
     count(`SELECT COUNT(*) AS n FROM loans WHERE status = 'checked_out' AND due_at < ?`, [n]),
     count(`SELECT COUNT(*) AS n FROM reservations WHERE status = 'waiting'`),
     count(`SELECT COUNT(*) AS n FROM users WHERE role = 'reader' AND status = 'active'`),
+    count(`SELECT COALESCE(SUM(amount), 0) AS n FROM fines WHERE status = 'pending'`),
   ])
   return {
+    pendingFines,
     books,
     copiesTotal,
     copiesAvailable,

@@ -4,6 +4,7 @@ import { approveLoanAction, checkoutLoanAction } from '@/actions/admin'
 import { AdminHeader, Panel } from '@/components/admin/AdminPage'
 import { ActionButton } from '@/components/ui/ConfirmAction'
 import { describeDue, formatDateTime, formatShortDate } from '@/lib/dates'
+import { formatCOP } from '@/lib/fines'
 import { requireStaff } from '@/server/auth/current-user'
 import { describeAudit, listAudit } from '@/server/audit'
 import { expireStalePickups, getDashboardStats, listStaffLoans } from '@/server/circulation'
@@ -33,6 +34,12 @@ export default async function AdminDashboard() {
     { label: 'Préstamos vencidos', value: stats.overdue, href: '/admin/prestamos?vista=vencidos', tone: stats.overdue ? 'danger' : undefined },
     { label: 'Por recoger', value: stats.pickups, href: '/admin/prestamos?vista=recoger' },
     { label: 'En lista de espera', value: stats.waitingReservations, href: '/admin/prestamos?vista=reservas' },
+    {
+      label: 'Multas por cobrar',
+      value: formatCOP(stats.pendingFines),
+      href: '/admin/prestamos?vista=multas',
+      tone: stats.pendingFines ? 'danger' : undefined,
+    },
     { label: 'Lectores activos', value: stats.readers, href: '/admin/usuarios?rol=reader' },
   ]
 

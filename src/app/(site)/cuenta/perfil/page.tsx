@@ -1,7 +1,9 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
-import { ChangePasswordForm, ProfileForm } from '@/components/account/ProfileForms'
+import { CircleAlert } from 'lucide-react'
+import { ChangePasswordForm, IdentityForm, LoanCardsManager, ProfileForm } from '@/components/account/ProfileForms'
+import { describeCard, formatPhone, maskDocument, type CardBrand } from '@/lib/identity'
 import { formatDate } from '@/lib/dates'
 import { ROLE_LABEL } from '@/lib/status'
 import { requireUser } from '@/server/auth/current-user'
@@ -9,7 +11,7 @@ import { getLegalParty, getLibraryInfo } from '@/server/site'
 import { getConsentStates } from '@/server/consents'
 import { RevokePrivacyForm } from '@/components/legal/ConsentForms'
 import { LEGAL_DOCUMENTS, LEGAL_PATH } from '@/lib/legal'
-import { getUserById } from '@/server/users'
+import { getUserById, listLoanCards } from '@/server/users'
 import styles from '../cuenta.module.css'
 
 export const metadata: Metadata = { title: 'Mi perfil' }
@@ -21,6 +23,11 @@ export default async function ProfilePage() {
   const info = getLibraryInfo()
   const consents = await getConsentStates(user.id)
   const party = getLegalParty()
+  const cards = await listLoanCards(user.id)
+  const savedCard =
+    user.identity.cardBrand && user.identity.cardLast4
+      ? describeCard(user.identity.cardBrand as CardBrand, user.identity.cardLast4)
+      : null
 
   return (
     <div className="container">
@@ -66,6 +73,49 @@ export default async function ProfilePage() {
             </a>
             .
           </p>
+        </section>
+
+        <section aria-labelledby="datos-prestamo-titulo" id="datos-prestamo" className={styles.panel}>
+          <h2 id="datos-prestamo-titulo" className={styles.panelTitle}>
+            Datos para préstamos
+          </h2>
+          {user.identity.complete ? (
+            <dl className={styles.facts} style={{ borderTop: 0, paddingTop: 0 }}>
+              <div>
+                <dt>Teléfono</dt>
+                <dd>{formatPhone(user.identity.phone!)}</dd>
+              </div>
+              <div>
+                <dt>Documento</dt>
+                <dd>{maskDocument(user.identity.documentType!, user.identity.documentNumber!)}</dd>
+              </div>
+              <div>
+                <dt>Tarjeta</dt>
+                <dd>{savedCard}</dd>
+              </div>
+            </dl>
+          ) : (
+            <div className="alert alert--warning" role="note">
+              <CircleAlert aria-hidden="true" />
+              <p>Completa estos datos para poder pedir y reservar libros.</p>
+            </div>
+          )}
+          <IdentityForm
+            values={{
+              phone: user.identity.phone ?? '',
+              documentType: user.identity.documentType ?? '',
+              documentNumber: user.identity.documentNumber ?? '',
+            }}
+            savedCard={savedCard}
+          />
+        </section>
+
+        <section aria-labelledby="carnes" className={styles.panel}>
+          <h2 id="carnes" className={styles.panelTitle}>
+            Carnés de préstamo
+          </h2>
+          <p className="meta">Al pedir un libro eliges con cuál. El de la biblioteca no se puede eliminar.</p>
+          <LoanCardsManager cards={cards} />
         </section>
 
         <section aria-labelledby="aceptaciones" className={styles.panel}>

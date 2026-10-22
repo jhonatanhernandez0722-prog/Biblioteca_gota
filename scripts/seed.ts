@@ -29,7 +29,7 @@ async function main() {
     console.log('Portadas borradas.')
   }
 
-  const { get, run } = await import('@/server/db')
+  const { get, run, transaction } = await import('@/server/db')
   const users = await import('@/server/users')
   const catalog = await import('@/server/catalog')
   const circulation = await import('@/server/circulation')
@@ -43,8 +43,15 @@ async function main() {
 
   /* Usuarios de demostración */
   const ids: Record<string, number> = {}
-  for (const u of DEMO_USERS) {
-    const created = await users.registerUser({ ...u, isDemo: true })
+  for (const [i, u] of DEMO_USERS.entries()) {
+    // Datos ficticios: tarjeta de pruebas Visa (pasa Luhn, no existe) y documentos inventados.
+    const identity = {
+      phone: `30${String(10_000_000 + i * 1_234_567).slice(0, 8)}`,
+      documentType: 'CC',
+      documentNumber: String(80_000_000 + i * 111_111),
+      creditCard: '4242 4242 4242 4242',
+    }
+    const created = await users.registerUser({ ...u, isDemo: true, identity, consents: { source: 'semilla:demo' } })
     ids[u.key] = created.id
   }
   const staffId = ids.librarian!
@@ -131,39 +138,49 @@ async function main() {
 
   /* Circulación de demostración, con las mismas reglas que la aplicación. */
   const day = 86_400_000
-  const backdate = async (loanId: number, checkedOutDaysAgo: number) => {
+  /** El plazo es inmutable: mover fechas al pasado es una corrección explícita de datos de demostración. */
+  const backdate = async (loanId: number, checkedOutDaysAgo: number, loanDays: number) => {
     const out = new Date(Date.now() - checkedOutDaysAgo * day)
     const requested = new Date(out.getTime() - 2 * day)
-    const due = new Date(out.getTime() + 21 * day)
-    await run(
-      `UPDATE loans SET requested_at = ?, decided_at = ?, checked_out_at = ?, due_at = ?, is_demo = TRUE WHERE id = ?`,
-      [requested.toISOString(), requested.toISOString(), out.toISOString(), due.toISOString(), loanId],
-    )
+    const due = new Date(out.getTime() + loanDays * day)
+    await transaction(async () => {
+      await run(`SELECT set_config('gotagota.term_override', 'on', true)`)
+      await run(
+        `UPDATE loans SET requested_at = ?, decided_at = ?, checked_out_at = ?, due_at = ?, is_demo = TRUE WHERE id = ?`,
+        [requested.toISOString(), requested.toISOString(), out.toISOString(), due.toISOString(), loanId],
+      )
+    })
   }
-  const lend = async (userKey: string, bookKey: string, daysAgo: number) => {
-    const { loanId } = await circulation.requestLoan(ids[userKey]!, bookIds[bookKey]!)
+  const lend = async (userKey: string, bookKey: string, daysAgo: number, loanDays: 7 | 14 | 21) => {
+    const { loanId } = await circulation.requestLoan(ids[userKey]!, bookIds[bookKey]!, { loanDays })
     await circulation.approveLoan(staffId, loanId)
     await circulation.checkoutLoan(staffId, loanId)
-    await backdate(loanId, daysAgo)
+    await backdate(loanId, daysAgo, loanDays)
     return loanId
   }
 
-  await lend('samuel', 'cien-anos', 11)
-  await lend('camila', 'cien-anos', 6)
-  await lend('samuel', '1984', 24) // vencido hace 3 días
-  await lend('reader', 'rayuela', 15)
-  const returned = await lend('reader', 'principito', 40)
+  await lend('samuel', 'cien-anos', 11, 21)
+  await lend('camila', 'cien-anos', 6, 14)
+  await lend('samuel', '1984', 17, 14) // vencido hace 3 días: multa acumulada de $15.000
+  await lend('reader', 'rayuela', 5, 7)
+  // Préstamo antiguo devuelto a tiempo: se devuelve hoy (sin multa) y luego se fechan en el pasado.
+  const returned = await lend('reader', 'principito', 0, 21)
   await circulation.returnLoan(staffId, returned)
+  await backdate(returned, 40, 21)
   await run('UPDATE loans SET returned_at = ?, updated_at = ? WHERE id = ?', [
     new Date(Date.now() - 22 * day).toISOString(),
     new Date(Date.now() - 22 * day).toISOString(),
     returned,
   ])
-  const ready = await circulation.requestLoan(ids.reader!, bookIds['sombra-viento']!)
+  await circulation.requestLoan(ids.camila!, bookIds.ficciones!, { loanDays: 7 })
+  // Una devolución tardía ya cerrada: deja a Camila con una multa de 2 días por pagar.
+  const lateReturn = await lend('camila', 'principito', 16, 14)
+  await circulation.returnLoan(staffId, lateReturn)
+  const ready = await circulation.requestLoan(ids.reader!, bookIds['sombra-viento']!, { loanDays: 21 })
   await circulation.approveLoan(staffId, ready.loanId)
-  await circulation.requestLoan(ids.reader!, bookIds.cosmos!)
-  await circulation.requestLoan(ids.camila!, bookIds.ficciones!)
-  await circulation.reserveBook(ids.reader!, bookIds['cien-anos']!)
+  await circulation.requestLoan(ids.reader!, bookIds.cosmos!, { loanDays: 14, cardNumber: 'UNAL-2026-0042' })
+  await circulation.reserveBook(ids.reader!, bookIds['cien-anos']!, { loanDays: 14 })
+  await run('UPDATE fines SET is_demo = TRUE')
   await run('UPDATE loans SET is_demo = TRUE')
   console.log('Circulación de demostración creada.')
 

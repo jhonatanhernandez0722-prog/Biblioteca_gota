@@ -4,42 +4,39 @@ import { useId, useState } from 'react'
 import styles from './PaceCalculator.module.css'
 
 /**
- * «Gota a gota»: cuántos días tardarías en leer un libro según tu ritmo, y si te
- * alcanza el plazo de préstamo. Cada gota es un día de lectura.
- * Usa datos reales: las páginas del libro y las reglas de préstamo del servidor.
+ * «Gota a gota»: cuántos días tardarías en leer un libro según tu ritmo, y qué plazo de
+ * lectura te conviene elegir al pedirlo. Cada gota es un día de lectura.
+ * Usa datos reales: las páginas del libro y los plazos de préstamo del servidor.
  */
 export function PaceCalculator({
   title,
   pageCount,
-  loanDays,
-  maxRenewals,
+  periods,
   tone = 'paper',
   defaultPages = 20,
 }: {
   title: string
   pageCount: number
-  loanDays: number
-  maxRenewals: number
+  /** Plazos de lectura que se pueden elegir, de menor a mayor. */
+  periods: readonly number[]
   tone?: 'paper' | 'ink'
   defaultPages?: number
 }) {
   const id = useId()
   const [pagesPerDay, setPagesPerDay] = useState(defaultPages)
   const days = Math.max(1, Math.ceil(pageCount / pagesPerDay))
-  const maxDays = loanDays * (maxRenewals + 1)
-  const renewalsNeeded = Math.max(0, Math.ceil(days / loanDays) - 1)
-  const fits = days <= maxDays
-  const shown = Math.min(days, maxDays + loanDays)
-  const neededPace = Math.ceil(pageCount / maxDays)
+  const shortest = periods[0]!
+  const longest = periods.at(-1)!
+  const fitting = periods.find((p) => p >= days)
+  const shown = Math.min(days, longest + shortest)
+  const neededPace = Math.ceil(pageCount / longest)
 
-  const times = (n: number) => (n === 1 ? 'una vez' : n === 2 ? 'dos veces' : `${n} veces`)
   let verdict: string
-  if (days <= loanDays) {
-    verdict = `Te alcanza el préstamo de ${loanDays} días${days < loanDays ? ` y te sobran ${loanDays - days}` : ''}.`
-  } else if (fits) {
-    verdict = `Te da tiempo si lo renuevas ${times(renewalsNeeded)}${renewalsNeeded === maxRenewals ? ', el máximo permitido' : ''}.`
+  if (fitting) {
+    const spare = fitting - days
+    verdict = `Elige el plazo de ${fitting} días${spare > 0 ? ` y te sobran ${spare}` : ''}.`
   } else {
-    verdict = `Es más de lo que permite el préstamo, incluso renovándolo (${maxDays} días). Con ${neededPace} páginas al día llegarías a tiempo.`
+    verdict = `Es más que el plazo más largo (${longest} días), y los préstamos no se renuevan. Con ${neededPace} páginas al día llegarías a tiempo.`
   }
 
   return (
@@ -76,19 +73,17 @@ export function PaceCalculator({
       <div className={styles.drops} aria-hidden="true">
         {Array.from({ length: shown }, (_, i) => {
           const day = i + 1
-          const period = Math.ceil(day / loanDays)
-          const className =
-            period === 1 ? styles.p1 : period <= maxRenewals + 1 ? styles.p2 : styles.over
+          const className = day <= shortest ? styles.p1 : day <= longest ? styles.p2 : styles.over
           return <span key={i} className={`${styles.drop} ${className}`} />
         })}
         {days > shown ? <span className={styles.more}>+{days - shown}</span> : null}
       </div>
       <ul className={styles.legend} aria-label="Leyenda">
         <li>
-          <span className={`${styles.drop} ${styles.p1}`} aria-hidden="true" /> Préstamo ({loanDays} días)
+          <span className={`${styles.drop} ${styles.p1}`} aria-hidden="true" /> Plazo corto ({shortest} días)
         </li>
         <li>
-          <span className={`${styles.drop} ${styles.p2}`} aria-hidden="true" /> Con renovaciones
+          <span className={`${styles.drop} ${styles.p2}`} aria-hidden="true" /> Hasta {longest} días
         </li>
         <li>
           <span className={`${styles.drop} ${styles.over}`} aria-hidden="true" /> Fuera de plazo

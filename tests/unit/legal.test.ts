@@ -61,7 +61,12 @@ describe('Registro de aceptaciones', () => {
   })
 
   it('sin aceptaciones vigentes no se puede pedir libros; revocar tiene efecto real', async () => {
-    const user = await registerUser({ name: 'Saúl', email: 'saul@test.example', password: 'clave-segura-123' })
+    const user = await registerUser({
+      name: 'Saúl',
+      email: 'saul@test.example',
+      password: 'clave-segura-123',
+      identity: { phone: '3001234567', documentType: 'CC', documentNumber: '52123456', creditCard: '4242424242424242' },
+    })
     assert.deepEqual(await pendingConsents(user.id), ['terminos', 'privacidad'])
     assert.equal((await getReaderEligibility(user.id)).canRequest, false)
     const { id: bookId } = await createBook({ title: 'Libro legal', authors: ['X'], categories: [] }, user.id)

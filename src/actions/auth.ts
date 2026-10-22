@@ -9,7 +9,7 @@ import { clientKey, endSession, safeNextPath, startSession } from '@/server/auth
 import { rateLimit, resetRateLimit } from '@/server/auth/rate-limit'
 import { isDomainError } from '@/server/errors'
 import { setFlash } from '@/server/flash'
-import { authenticate, registerUser, requestPasswordReset, resetPassword } from '@/server/users'
+import { authenticate, registerUser, requestPasswordReset, resetPassword, validateIdentity } from '@/server/users'
 
 const email = z.string().trim().min(1, 'Escribe tu correo.').email('Revisa el correo: falta algo (por ejemplo, la @).').max(160)
 const newPassword = z
@@ -85,21 +85,39 @@ const registerSchema = z
       message: 'Sin aceptar los términos no podemos crear tu cuenta: definen cómo funciona el préstamo. Puedes consultar el catálogo sin cuenta.',
     }),
     acceptPrivacy: z.literal('on', {
-      message: 'Sin tu autorización no podemos tratar tu nombre y correo, y sin ellos no es posible gestionar préstamos. Puedes consultar el catálogo sin cuenta.',
+      message: 'Sin tu autorización no podemos tratar tus datos, y sin ellos no es posible gestionar préstamos. Puedes consultar el catálogo sin cuenta.',
     }),
     siguiente: z.string().optional(),
   })
 
 export async function registerAction(_: ActionState | null, formData: FormData): Promise<ActionState> {
+  const field = (name: string, max = 40) => String(formData.get(name) ?? '').slice(0, max)
+  // La tarjeta no se devuelve nunca al navegador, ni siquiera tras un error.
   const values = {
-    name: String(formData.get('name') ?? '').slice(0, 80),
-    email: String(formData.get('email') ?? '').slice(0, 160),
+    name: field('name', 80),
+    email: field('email', 160),
+    phone: field('phone'),
+    documentType: field('documentType'),
+    documentNumber: field('documentNumber'),
+  }
+  const identity = {
+    phone: values.phone,
+    documentType: values.documentType,
+    documentNumber: values.documentNumber,
+    creditCard: field('creditCard'),
   }
   const parsed = registerSchema.safeParse(Object.fromEntries(formData))
   const errors = checkConfirmation(formData, parsed.success ? {} : fieldErrors(parsed.error))
+  try {
+    validateIdentity(identity)
+  } catch (error) {
+    if (!isDomainError(error)) throw error
+    for (const [key, message] of Object.entries(error.fieldErrors ?? {})) errors[key] ??= message
+  }
   if (!parsed.success || Object.keys(errors).length) {
     return { ok: false, message: 'Revisa los campos marcados.', fieldErrors: errors, values }
   }
+  // Limita también la prueba de números de tarjeta o de documento por fuerza bruta.
   const limit = rateLimit(`register:${await clientKey()}`, 6, 60 * 60_000)
   if (!limit.ok) return { ok: false, message: waitMessage(limit.retryAfterSeconds), values }
 
@@ -110,6 +128,7 @@ export async function registerAction(_: ActionState | null, formData: FormData):
       email: parsed.data.email,
       password: parsed.data.password,
       consents: { source: 'formulario:registro', requestId: randomUUID() },
+      identity,
     })
   } catch (error) {
     if (isDomainError(error)) return { ok: false, message: error.message, fieldErrors: error.fieldErrors, values }

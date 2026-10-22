@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 import { z } from 'zod'
 import { formatDate } from '@/lib/dates'
+import { describeLate, formatCOP } from '@/lib/fines'
 import type { ActionState, CopyCondition, CopyStatus, Role, UserStatus } from '@/lib/types'
 import { requireAdmin, requireStaff } from '@/server/auth/current-user'
 import {
@@ -24,13 +25,14 @@ import {
   cancelReservation,
   checkoutLoan,
   rejectLoan,
-  renewLoan,
   returnLoan,
   setCopyStatus,
+  settleFine,
 } from '@/server/circulation'
 import { fetchRemoteCover, isAllowedCoverUrl, MAX_COVER_BYTES, removeCover, storeCover } from '@/server/covers'
 import { isDomainError } from '@/server/errors'
 import { setFlash } from '@/server/flash'
+import { invalidateSearchCache } from '@/server/search-cache'
 import { setUserRole, setUserStatus } from '@/server/users'
 
 const id = z.coerce.number().int().positive()
@@ -58,6 +60,7 @@ async function attempt(fn: () => string | Promise<string>, paths: string[]): Pro
   try {
     const message = await fn()
     for (const path of paths) revalidatePath(path)
+    invalidateSearchCache()
     return { ok: true, message }
   } catch (error) {
     if (isDomainError(error)) return { ok: false, message: error.message, fieldErrors: error.fieldErrors }
@@ -236,6 +239,7 @@ export async function saveBookAction(_: ActionState | null, formData: FormData):
   revalidatePath('/admin/libros')
   revalidatePath(`/libros/${saved.slug}`)
   revalidatePath('/')
+  invalidateSearchCache()
   await setFlash(data.bookId ? 'Cambios guardados.' : `«${data.title}» ya está en el catálogo.`)
   redirect(`/admin/libros/${saved.id}`)
 }
@@ -270,6 +274,7 @@ export async function deleteBookAction(_: ActionState | null, formData: FormData
   }
   revalidatePath('/admin/libros')
   revalidatePath('/')
+  invalidateSearchCache()
   await setFlash(`Se eliminó la ficha de «${book?.title ?? 'el libro'}».`)
   redirect('/admin/libros')
 }
@@ -389,20 +394,35 @@ export async function returnLoanAction(_: ActionState | null, formData: FormData
     .safeParse(Object.fromEntries(formData))
   if (!parsed.success) return { ok: false, message: 'Préstamo no válido.' }
   return attempt(async () => {
-    await returnLoan(staff.id, parsed.data.loanId, { toMaintenance: Boolean(parsed.data.toMaintenance) })
-    return parsed.data.toMaintenance
+    const { fine } = await returnLoan(staff.id, parsed.data.loanId, { toMaintenance: Boolean(parsed.data.toMaintenance) })
+    const base = parsed.data.toMaintenance
       ? 'Devolución registrada. El ejemplar pasa a reparación.'
       : 'Devolución registrada. Si había lista de espera, el ejemplar ya está apartado para la siguiente persona.'
+    return fine
+      ? `${base} Llegó con ${describeLate(fine.days)}: se generó una multa de ${formatCOP(fine.amount)}.`
+      : base
   }, LOAN_PATHS)
 }
 
-export async function staffRenewLoanAction(_: ActionState | null, formData: FormData): Promise<ActionState> {
+const fineForm = z.object({ fineId: id, reason: z.string().max(300).optional() })
+
+export async function payFineAction(_: ActionState | null, formData: FormData): Promise<ActionState> {
   const staff = await requireStaff()
-  const parsed = loanForm.safeParse(Object.fromEntries(formData))
-  if (!parsed.success) return { ok: false, message: 'Préstamo no válido.' }
+  const parsed = fineForm.safeParse(Object.fromEntries(formData))
+  if (!parsed.success) return { ok: false, message: 'Multa no válida.' }
   return attempt(async () => {
-    const { dueAt } = await renewLoan({ id: staff.id, isStaff: true }, parsed.data.loanId)
-    return `Renovado hasta el ${formatDate(dueAt)}.`
+    await settleFine(staff.id, parsed.data.fineId, 'paid', parsed.data.reason)
+    return 'Pago registrado. Si no tiene otras deudas, el lector ya puede volver a pedir libros.'
+  }, LOAN_PATHS)
+}
+
+export async function waiveFineAction(_: ActionState | null, formData: FormData): Promise<ActionState> {
+  const staff = await requireStaff()
+  const parsed = fineForm.safeParse(Object.fromEntries(formData))
+  if (!parsed.success) return { ok: false, message: 'Multa no válida.' }
+  return attempt(async () => {
+    await settleFine(staff.id, parsed.data.fineId, 'waived', parsed.data.reason)
+    return 'Multa condonada. El motivo queda en el registro de actividad.'
   }, LOAN_PATHS)
 }
 

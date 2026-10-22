@@ -5,6 +5,8 @@ import { AdminHeader, Panel } from '@/components/admin/AdminPage'
 import { RoleForm } from '@/components/admin/RoleForm'
 import { ActionButton, ConfirmAction } from '@/components/ui/ConfirmAction'
 import { describeDue, formatDate, formatShortDate } from '@/lib/dates'
+import { formatCOP } from '@/lib/fines'
+import { describeCard, formatPhone, maskDocument, type CardBrand } from '@/lib/identity'
 import { LOAN_STATUS, loanDisplayStatus, ROLE_LABEL } from '@/lib/status'
 import { requireStaff } from '@/server/auth/current-user'
 import { listUserLoans, listUserReservations } from '@/server/circulation'
@@ -53,6 +55,32 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
               <dt className="meta">Préstamos en curso / vencidos</dt>
               <dd style={{ margin: 0, fontWeight: 600 }}>
                 {user.activeLoans} / {user.overdueLoans}
+              </dd>
+            </div>
+            <div>
+              <dt className="meta">Multas por cobrar</dt>
+              <dd style={{ margin: 0, fontWeight: 600 }}>
+                {user.pendingFines ? (
+                  <Link href={`/admin/prestamos?vista=multas&q=${encodeURIComponent(user.cardNumber)}`} className="link">
+                    {formatCOP(user.pendingFines)}
+                  </Link>
+                ) : (
+                  'Ninguna'
+                )}
+              </dd>
+            </div>
+            <div>
+              <dt className="meta">Datos para préstamos</dt>
+              <dd style={{ margin: 0, fontWeight: 600 }}>
+                {user.identity.complete ? (
+                  <>
+                    {formatPhone(user.identity.phone!)} ·{' '}
+                    {maskDocument(user.identity.documentType!, user.identity.documentNumber!)} ·{' '}
+                    {describeCard(user.identity.cardBrand as CardBrand, user.identity.cardLast4!)}
+                  </>
+                ) : (
+                  <span className="badge badge--warning">Incompletos: no puede pedir libros</span>
+                )}
               </dd>
             </div>
           </dl>
