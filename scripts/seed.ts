@@ -136,7 +136,7 @@ async function main() {
     const requested = new Date(out.getTime() - 2 * day)
     const due = new Date(out.getTime() + 21 * day)
     await run(
-      `UPDATE loans SET requested_at = ?, decided_at = ?, checked_out_at = ?, due_at = ?, is_demo = 1 WHERE id = ?`,
+      `UPDATE loans SET requested_at = ?, decided_at = ?, checked_out_at = ?, due_at = ?, is_demo = TRUE WHERE id = ?`,
       [requested.toISOString(), requested.toISOString(), out.toISOString(), due.toISOString(), loanId],
     )
   }
@@ -164,7 +164,7 @@ async function main() {
   await circulation.requestLoan(ids.reader!, bookIds.cosmos!)
   await circulation.requestLoan(ids.camila!, bookIds.ficciones!)
   await circulation.reserveBook(ids.reader!, bookIds['cien-anos']!)
-  await run('UPDATE loans SET is_demo = 1')
+  await run('UPDATE loans SET is_demo = TRUE')
   console.log('Circulación de demostración creada.')
 
   console.log('\nCuentas de demostración:')

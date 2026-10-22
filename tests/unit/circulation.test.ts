@@ -7,6 +7,8 @@ import {
   deleteBook,
   findPossibleDuplicates,
   getBookById,
+  getEditorialPick,
+  getFeaturedBooks,
   listCopies,
   searchBooks,
   setBookStatus,
@@ -57,6 +59,21 @@ before(async () => {
   ana = (await registerUser({ name: 'Ana', email: 'ana@test.example', password: 'clave-segura-123', consents: { source: 'test' } })).id
   beto = (await registerUser({ name: 'Beto', email: 'beto@test.example', password: 'clave-segura-123', consents: { source: 'test' } })).id
   carla = (await registerUser({ name: 'Carla', email: 'carla@test.example', password: 'clave-segura-123', consents: { source: 'test' } })).id
+})
+
+describe('Indicadores booleanos del catálogo', () => {
+  it('consulta y guarda libros destacados y selección editorial con tipos booleanos', async () => {
+    const { id } = await createBook({
+      title: 'Selección editorial de prueba',
+      authors: ['Autora de Prueba'],
+      categories: [],
+      featured: true,
+      editorialPick: true,
+    }, staff)
+
+    assert.equal((await getEditorialPick())?.id, id)
+    assert.ok((await getFeaturedBooks()).some((book) => book.id === id))
+  })
 })
 
 describe('Ciclo de un préstamo', () => {

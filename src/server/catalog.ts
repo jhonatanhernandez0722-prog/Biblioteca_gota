@@ -133,12 +133,12 @@ async function toDetail(row: BookRow): Promise<BookDetail> {
     sourceProvider: row.source_provider,
     sourceRef: row.source_ref,
     sourceUrl: row.source_url,
-    featured: row.featured === 1,
-    editorialPick: row.editorial_pick === 1,
+    featured: Boolean(row.featured),
+    editorialPick: Boolean(row.editorial_pick),
     editorialNote: row.editorial_note,
     editorialQuote: row.editorial_quote,
     waitingReservations: waiting,
-    isDemo: row.is_demo === 1,
+    isDemo: Boolean(row.is_demo),
     updatedAt: row.updated_at,
   }
 }
@@ -376,7 +376,7 @@ export async function getHeroBooks(limit = 3): Promise<BookSummary[]> {
 export async function getFeaturedBooks(limit = 4): Promise<BookSummary[]> {
   return await toSummaries(
     await all<BookRow>(
-      `${BOOK_SELECT} WHERE b.status = 'active' AND b.featured = 1 ORDER BY b.updated_at DESC LIMIT ?`,
+      `${BOOK_SELECT} WHERE b.status = 'active' AND b.featured = TRUE ORDER BY b.updated_at DESC LIMIT ?`,
       [limit],
     ),
   )
@@ -433,7 +433,7 @@ export async function getMostBorrowed(options: { days?: number; minLoans?: numbe
 }
 
 export async function getEditorialPick(): Promise<BookDetail | null> {
-  const row = await get<BookRow>(`${BOOK_SELECT} WHERE b.status = 'active' AND b.editorial_pick = 1 LIMIT 1`)
+  const row = await get<BookRow>(`${BOOK_SELECT} WHERE b.status = 'active' AND b.editorial_pick = TRUE LIMIT 1`)
   return row ? await toDetail(row) : null
 }
 
@@ -648,7 +648,7 @@ export async function createBook(input: BookInput, actorId: number | null): Prom
     const authors = cleanAuthors(input.authors)
     const categories = await ensureCategories(input.categories)
     const slug = await uniqueSlug(slugify(`${input.title} ${authors[0]?.split(' ').pop() ?? ''}`))
-    if (input.editorialPick) await run('UPDATE books SET editorial_pick = 0 WHERE editorial_pick = 1')
+    if (input.editorialPick) await run('UPDATE books SET editorial_pick = FALSE WHERE editorial_pick = TRUE')
     const callNumber =
       input.callNumber?.trim() ||
       suggestCallNumber({ title: input.title, authors, categories: categories.map((c) => c.name) })
@@ -675,11 +675,11 @@ export async function createBook(input: BookInput, actorId: number | null): Prom
         provider: input.sourceProvider ?? 'manual',
         ref: input.sourceRef ?? null,
         url: input.sourceUrl ?? null,
-        featured: input.featured ? 1 : 0,
-        pick: input.editorialPick ? 1 : 0,
+        featured: Boolean(input.featured),
+        pick: Boolean(input.editorialPick),
         note: input.editorialNote?.trim() || null,
         quote: input.editorialQuote?.trim() || null,
-        demo: input.isDemo ? 1 : 0,
+        demo: Boolean(input.isDemo),
         search: buildSearchText({
           title: input.title,
           subtitle: input.subtitle,
@@ -722,7 +722,9 @@ export async function updateBook(id: number, input: BookInput, actorId: number):
     await assertIsbnFree(isbn, id)
     const authors = cleanAuthors(input.authors)
     const categories = await ensureCategories(input.categories)
-    if (input.editorialPick) await run('UPDATE books SET editorial_pick = 0 WHERE editorial_pick = 1 AND id <> ?', [id])
+    if (input.editorialPick) {
+      await run('UPDATE books SET editorial_pick = FALSE WHERE editorial_pick = TRUE AND id <> ?', [id])
+    }
     await run(
       `UPDATE books SET title = :title, subtitle = :subtitle, description = :description, publisher = :publisher,
          published_year = :year, isbn13 = :isbn13, isbn10 = :isbn10, language = :language, page_count = :pages,
@@ -745,8 +747,8 @@ export async function updateBook(id: number, input: BookInput, actorId: number):
           input.callNumber?.trim() ||
           suggestCallNumber({ title: input.title, authors, categories: categories.map((c) => c.name) }),
         keywords: input.keywords?.trim() || null,
-        featured: input.featured ? 1 : 0,
-        pick: input.editorialPick ? 1 : 0,
+        featured: Boolean(input.featured),
+        pick: Boolean(input.editorialPick),
         note: input.editorialNote?.trim() || null,
         quote: input.editorialQuote?.trim() || null,
         search: buildSearchText({

@@ -60,7 +60,7 @@ export async function registerUser(input: {
     const role = input.role ?? 'reader'
     const { lastInsertRowid: id } = await run(
       `INSERT INTO users (name, email, password_hash, role, card_number, is_demo) VALUES (?, ?, ?, ?, ?, ?)`,
-      [input.name.trim(), email, passwordHash, role, cardNumber, input.isDemo ? 1 : 0],
+      [input.name.trim(), email, passwordHash, role, cardNumber, Boolean(input.isDemo)],
     )
     if (input.consents) {
       for (const c of ACCOUNT_CONSENTS) {
@@ -219,7 +219,7 @@ export async function listUsers(options: { q?: string; role?: Role; status?: Use
     createdAt: r.created_at,
     activeLoans: r.active_loans,
     overdueLoans: r.overdue_loans,
-    isDemo: r.is_demo === 1,
+    isDemo: Boolean(r.is_demo),
   }))
   return { users, total }
 }
@@ -243,7 +243,7 @@ export async function getUserById(id: number): Promise<UserListItem | null> {
     createdAt: row.created_at,
     activeLoans: row.active_loans,
     overdueLoans: row.overdue_loans,
-    isDemo: row.is_demo === 1,
+    isDemo: Boolean(row.is_demo),
   }
 }
 
