@@ -103,7 +103,9 @@ async function createPgliteDriver(dataDir?: string): Promise<Driver> {
   }
 }
 
-const globalForDb = globalThis as unknown as { __gotaGotaDb?: Promise<Driver> }
+const globalForDb = globalThis as typeof globalThis & {
+  __bibliotecaGotaGotaPostgresDriver?: Promise<Driver>
+}
 
 async function init(): Promise<Driver> {
   const url = env().DATABASE_URL
@@ -113,11 +115,17 @@ async function init(): Promise<Driver> {
 }
 
 function driver(): Promise<Driver> {
-  globalForDb.__gotaGotaDb ??= init().catch((error) => {
-    globalForDb.__gotaGotaDb = undefined
+  globalForDb.__bibliotecaGotaGotaPostgresDriver ??= init().catch((error) => {
+    globalForDb.__bibliotecaGotaGotaPostgresDriver = undefined
     throw error
   })
-  return globalForDb.__gotaGotaDb
+  return globalForDb.__bibliotecaGotaGotaPostgresDriver.then((db) => {
+    if (typeof db.query !== 'function' || typeof db.transaction !== 'function') {
+      globalForDb.__bibliotecaGotaGotaPostgresDriver = undefined
+      throw new Error('El controlador PostgreSQL guardado no es válido. Reinicia o vuelve a desplegar la aplicación.')
+    }
+    return db
+  })
 }
 
 async function migrate(db: Driver) {
