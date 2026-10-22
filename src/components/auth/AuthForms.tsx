@@ -11,6 +11,7 @@ import {
 import { ConsentCheckboxes } from '@/components/legal/ConsentCheckboxes'
 import { FormAlert } from '@/components/ui/FormFeedback'
 import { SubmitButton } from '@/components/ui/SubmitButton'
+import { IdentityFields } from './IdentityFields'
 import { PasswordField, TextField } from './PasswordField'
 import styles from './AuthForms.module.css'
 
@@ -119,6 +120,7 @@ export function RegisterForm({ next }: { next?: string }) {
         autoComplete="new-password"
         error={state?.fieldErrors?.confirm}
       />
+      <IdentityFields errors={state?.fieldErrors} values={state?.values} />
       <ConsentCheckboxes errors={state?.fieldErrors} />
       {next ? <input type="hidden" name="siguiente" value={next} /> : null}
       <SubmitButton className="btn btn--block" pendingLabel="Creando tu cuenta…">

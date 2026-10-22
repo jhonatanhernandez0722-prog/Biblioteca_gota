@@ -372,8 +372,7 @@ export default async function HomePage() {
                 <PaceCalculator
                   title={pick.title}
                   pageCount={pick.pageCount}
-                  loanDays={LOAN_RULES.loanDays}
-                  maxRenewals={LOAN_RULES.maxRenewals}
+                  periods={LOAN_RULES.loanPeriods}
                   tone="ink"
                   defaultPages={25}
                 />
@@ -392,7 +391,7 @@ export default async function HomePage() {
             <div>
               <h2 id="pasos-title">Así funciona el préstamo</h2>
               <p className={styles.sectionIntro}>
-                {LOAN_RULES.loanDays} días por libro, renovable {LOAN_RULES.maxRenewals} veces si nadie lo está esperando.
+                Tú eliges el plazo de lectura: {LOAN_RULES.loanPeriods.join(', ')} días. Queda fijo al confirmar.
               </p>
             </div>
             <Link href="/como-funciona" className="link">

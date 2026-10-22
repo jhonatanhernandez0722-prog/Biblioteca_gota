@@ -1,5 +1,5 @@
 -- Biblioteca Gota Gota · esquema para PostgreSQL (Neon)
--- Equivale a las migraciones 001_initial y 002_legal_consents de src/server/db/migrations.ts.
+-- Equivale a las migraciones 001_initial, 002_legal_consents y 003_identity_cards_terms_fines de src/server/db/migrations.ts.
 -- Ejecutar una vez en el SQL Editor de Neon (o con psql) sobre una base de datos vacía.
 
 BEGIN;
@@ -224,7 +224,105 @@ CREATE TRIGGER consent_records_no_truncate BEFORE TRUNCATE ON consent_records
 CREATE TRIGGER legal_versions_no_update BEFORE UPDATE ON legal_document_versions
   FOR EACH ROW EXECUTE FUNCTION forbid_change('Una versión publicada no se modifica: publica una nueva');
 
-INSERT INTO schema_migrations (id) VALUES ('001_initial'), ('002_legal_consents');
+-- ───────────── Identificación del lector ─────────────
+-- De la tarjeta de crédito solo se guarda franquicia y últimos 4 dígitos (PCI DSS):
+-- el número completo nunca llega a la base de datos.
+ALTER TABLE users ADD COLUMN phone TEXT CHECK (phone ~ '^[0-9]{10}$');
+ALTER TABLE users ADD COLUMN document_type TEXT CHECK (document_type IN ('CC','TI'));
+ALTER TABLE users ADD COLUMN document_number TEXT CHECK (document_number ~ '^[1-9][0-9]{5,10}$');
+ALTER TABLE users ADD COLUMN card_brand TEXT;
+ALTER TABLE users ADD COLUMN card_last4 TEXT CHECK (card_last4 ~ '^[0-9]{4}$');
+ALTER TABLE users ADD COLUMN identity_updated_at TIMESTAMPTZ;
+-- Una persona, una cuenta: el documento no se repite.
+CREATE UNIQUE INDEX users_document ON users(document_type, document_number) WHERE document_number IS NOT NULL;
+
+-- ───────────── Carnés de préstamo ─────────────
+CREATE TABLE loan_cards (
+  id BIGSERIAL PRIMARY KEY,
+  user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  number TEXT NOT NULL UNIQUE CHECK (number ~ '^[A-Z0-9][A-Z0-9-]{4,22}[A-Z0-9]$'),
+  label TEXT NOT NULL,
+  is_primary BOOLEAN NOT NULL DEFAULT false,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX loan_cards_user ON loan_cards(user_id);
+CREATE UNIQUE INDEX loan_cards_one_primary ON loan_cards(user_id) WHERE is_primary;
+INSERT INTO loan_cards (user_id, number, label, is_primary, created_at)
+  SELECT id, card_number, 'Carné de lector Gota Gota', true, created_at FROM users;
+
+-- ───────────── Plazo de lectura fijo ─────────────
+ALTER TABLE loans ADD COLUMN loan_days INTEGER;
+-- Los préstamos anteriores se pidieron con el plazo único de 21 días.
+UPDATE loans SET loan_days = 21;
+ALTER TABLE loans ALTER COLUMN loan_days SET NOT NULL;
+ALTER TABLE loans ADD CONSTRAINT loans_loan_days_range CHECK (loan_days BETWEEN 1 AND 60);
+ALTER TABLE loans ADD COLUMN loan_card_id BIGINT REFERENCES loan_cards(id) ON DELETE SET NULL;
+ALTER TABLE loans ADD COLUMN loan_card_number TEXT;
+UPDATE loans l SET loan_card_number = u.card_number FROM users u WHERE u.id = l.user_id;
+
+ALTER TABLE reservations ADD COLUMN loan_days INTEGER NOT NULL DEFAULT 21 CHECK (loan_days BETWEEN 1 AND 60);
+ALTER TABLE reservations ADD COLUMN loan_card_id BIGINT REFERENCES loan_cards(id) ON DELETE SET NULL;
+
+-- Una vez confirmado, ni el plazo elegido ni la fecha de devolución cambian.
+-- Solo una corrección explícita de datos (SET LOCAL gotagota.term_override = 'on') lo permite.
+CREATE FUNCTION loans_lock_term() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF coalesce(current_setting('gotagota.term_override', true), '') = 'on' THEN
+    RETURN NEW;
+  END IF;
+  IF NEW.loan_days IS DISTINCT FROM OLD.loan_days THEN
+    RAISE EXCEPTION 'El plazo de lectura de un préstamo confirmado no se puede modificar';
+  END IF;
+  IF OLD.due_at IS NOT NULL AND NEW.due_at IS DISTINCT FROM OLD.due_at THEN
+    RAISE EXCEPTION 'La fecha de devolución de un préstamo entregado no se puede modificar';
+  END IF;
+  IF NEW.renewals <> OLD.renewals THEN
+    RAISE EXCEPTION 'Los préstamos tienen un plazo fijo y no se renuevan';
+  END IF;
+  RETURN NEW;
+END $$;
+CREATE TRIGGER loans_term_locked BEFORE UPDATE ON loans
+  FOR EACH ROW EXECUTE FUNCTION loans_lock_term();
+
+-- ───────────── Multas por mora ─────────────
+-- Multa = días de retraso × tarifa diaria. La base de datos garantiza la fórmula.
+CREATE TABLE fines (
+  id BIGSERIAL PRIMARY KEY,
+  loan_id BIGINT NOT NULL UNIQUE REFERENCES loans(id) ON DELETE RESTRICT,
+  user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  days_late INTEGER NOT NULL CHECK (days_late > 0),
+  daily_rate INTEGER NOT NULL CHECK (daily_rate > 0),
+  amount INTEGER NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','paid','waived')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  settled_at TIMESTAMPTZ,
+  settled_by BIGINT REFERENCES users(id) ON DELETE SET NULL,
+  settle_note TEXT,
+  is_demo BOOLEAN NOT NULL DEFAULT false,
+  CONSTRAINT fines_formula CHECK (amount = days_late * daily_rate),
+  CONSTRAINT fines_settled CHECK ((status = 'pending') = (settled_at IS NULL))
+);
+CREATE INDEX fines_user_status ON fines(user_id, status);
+CREATE INDEX fines_status_created ON fines(status, created_at DESC);
+
+-- El cálculo de una multa no se reescribe: solo cambia su estado (pagada o condonada).
+CREATE FUNCTION fines_lock_amount() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF NEW.loan_id <> OLD.loan_id OR NEW.user_id <> OLD.user_id OR NEW.days_late <> OLD.days_late
+     OR NEW.daily_rate <> OLD.daily_rate OR NEW.amount <> OLD.amount THEN
+    RAISE EXCEPTION 'El cálculo de una multa no se puede modificar';
+  END IF;
+  IF OLD.status <> 'pending' THEN
+    RAISE EXCEPTION 'Una multa pagada o condonada ya no cambia';
+  END IF;
+  RETURN NEW;
+END $$;
+CREATE TRIGGER fines_amount_locked BEFORE UPDATE ON fines
+  FOR EACH ROW EXECUTE FUNCTION fines_lock_amount();
+CREATE TRIGGER fines_no_delete BEFORE DELETE ON fines
+  FOR EACH ROW EXECUTE FUNCTION forbid_change('Las multas no se borran: se pagan o se condonan');
+
+INSERT INTO schema_migrations (id) VALUES ('001_initial'), ('002_legal_consents'), ('003_identity_cards_terms_fines');
 
 COMMIT;
 
@@ -233,3 +331,4 @@ COMMIT;
 -- GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO gotagota_app;
 -- GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO gotagota_app;
 -- REVOKE UPDATE, DELETE, TRUNCATE ON consent_records FROM gotagota_app;
+-- REVOKE DELETE, TRUNCATE ON fines FROM gotagota_app;

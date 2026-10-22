@@ -81,3 +81,44 @@
     display: none;
   }
 }
+
+/* Filtro: búsqueda en vivo + disponibilidad. Los contadores de cada categoría responden a él. */
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-3) var(--s-6);
+  margin-bottom: var(--s-8);
+}
+
+.searchField {
+  position: relative;
+  flex: 1 1 320px;
+  max-width: 560px;
+}
+
+.searchField :global(.input) {
+  padding-left: 46px;
+}
+
+.searchIcon {
+  position: absolute;
+  left: 15px;
+  top: 50%;
+  translate: 0 -50%;
+  width: 20px;
+  height: 20px;
+  color: var(--ink-2);
+  pointer-events: none;
+}
+
+:global(form[data-enhanced='true']) .apply {
+  display: none;
+}
+
+.summary {
+  flex-basis: 100%;
+  font-size: var(--fs-small);
+  font-weight: 650;
+  color: var(--ink-2);
+}

@@ -14,6 +14,7 @@ export type LoanStatus =
   | 'cancelled'
   | 'expired'
 export type ReservationStatus = 'waiting' | 'fulfilled' | 'cancelled'
+export type FineStatus = 'pending' | 'paid' | 'waived'
 
 export interface SessionUser {
   id: number
@@ -108,6 +109,49 @@ export interface LoanRecord {
   returnedAt: string | null
   renewals: number
   rejectionReason: string | null
+  /** Plazo de lectura elegido al pedirlo (días desde la entrega). Fijo una vez confirmado. */
+  loanDays: number
+  /** Carné con el que se pidió (copia del número, se conserva aunque el carné se elimine). */
+  loanCardNumber: string | null
+}
+
+/** Carné de préstamo registrado en una cuenta. El principal es el que emite la biblioteca. */
+export interface LoanCard {
+  id: number
+  number: string
+  label: string
+  isPrimary: boolean
+  createdAt: string
+}
+
+/** Datos de identificación del lector. Nunca contiene el número completo de la tarjeta. */
+export interface ReaderIdentity {
+  phone: string | null
+  documentType: 'CC' | 'TI' | null
+  documentNumber: string | null
+  cardBrand: string | null
+  cardLast4: string | null
+  /** true cuando están todos los datos que exige pedir préstamos. */
+  complete: boolean
+}
+
+export interface FineRecord {
+  id: number
+  loanId: number
+  userId: number
+  userName: string
+  userCardNumber: string
+  bookTitle: string
+  bookSlug: string
+  dueAt: string
+  returnedAt: string
+  daysLate: number
+  dailyRate: number
+  amount: number
+  status: FineStatus
+  createdAt: string
+  settledAt: string | null
+  settleNote: string | null
 }
 
 export interface ReservationRecord {
@@ -125,6 +169,7 @@ export interface ReservationRecord {
   createdAt: string
   /** Puesto en la cola (1 = siguiente). Solo para reservas en espera. */
   position: number | null
+  loanDays: number
 }
 
 /** Resultado estándar de una server action con formulario. */

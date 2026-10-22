@@ -16,7 +16,8 @@ export default async function RegisterPage({ searchParams }: { searchParams: Pro
     <>
       <h1 className={styles.title}>Crea tu carné</h1>
       <p className={styles.lead}>
-        Es gratis y tarda dos minutos. Con tu carné de lector puedes pedir hasta 5 libros a la vez.
+        Es gratis y tarda dos minutos. Ten a mano tu documento (CC o TI) y una tarjeta de crédito: con tu carné de
+        lector puedes pedir hasta 5 libros a la vez.
       </p>
       <RegisterForm next={next} />
       <p className={styles.switch}>

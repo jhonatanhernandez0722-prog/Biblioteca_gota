@@ -1,12 +1,15 @@
-import { BookmarkPlus, CalendarClock, CircleAlert, Clock, HandHelping, RefreshCw } from 'lucide-react'
+import { BookmarkPlus, CalendarClock, CircleAlert, Clock, HandHelping, Lock } from 'lucide-react'
 import Link from 'next/link'
-import { cancelLoanAction, cancelReservationAction, renewLoanAction, requestLoanAction, reserveAction } from '@/actions/reader'
-import { ActionButton, ConfirmAction } from '@/components/ui/ConfirmAction'
+import { cancelLoanAction, cancelReservationAction, requestLoanAction, reserveAction } from '@/actions/reader'
+import { BorrowRequest } from '@/components/books/BorrowRequest'
+import { ConfirmAction } from '@/components/ui/ConfirmAction'
 import { describeDue, formatDate } from '@/lib/dates'
-import { LOAN_RULES } from '@/lib/rules'
+import { accruedFine, describeLate, formatCOP } from '@/lib/fines'
+import { FINE_RULES, LOAN_RULES } from '@/lib/rules'
 import { loanDisplayStatus } from '@/lib/status'
 import type { BookDetail, SessionUser } from '@/lib/types'
 import { getReaderEligibility, getUserBookState } from '@/server/circulation'
+import { listLoanCards } from '@/server/users'
 import styles from './book.module.css'
 
 /** La acción principal de la ficha cambia según quién mira y en qué punto está con este libro. */
@@ -14,7 +17,6 @@ export async function BorrowPanel({ book, user }: { book: BookDetail; user: Sess
   const free = book.availableCopies
   const hasCopies = book.totalCopies > 0
   const next = `/libros/${book.slug}`
-  const hidden = { bookId: book.id, slug: book.slug }
 
   let status: React.ReactNode
   let action: React.ReactNode = null
@@ -53,8 +55,8 @@ export async function BorrowPanel({ book, user }: { book: BookDetail; user: Sess
       if (loan.status === 'pending') {
         status = (
           <p className={styles.panelStatus}>
-            <Clock aria-hidden="true" /> Pediste este libro el {formatDate(loan.requestedAt)}. El equipo lo apartará para
-            ti.
+            <Clock aria-hidden="true" /> Pediste este libro el {formatDate(loan.requestedAt)} por {loan.loanDays} días. El
+            equipo lo apartará para ti.
           </p>
         )
         action = (
@@ -87,29 +89,26 @@ export async function BorrowPanel({ book, user }: { book: BookDetail; user: Sess
           />
         )
       } else {
+        const fine = accruedFine(loan.dueAt!)
         status = (
           <p className={`${styles.panelStatus} ${display === 'overdue' ? styles.overdue : ''}`}>
             {display === 'overdue' ? <CircleAlert aria-hidden="true" /> : <CalendarClock aria-hidden="true" />}
             Lo tienes en préstamo hasta el {formatDate(loan.dueAt!)} ({describeDue(loan.dueAt!)}).
           </p>
         )
-        const canRenew =
-          display !== 'overdue' && loan.renewals < LOAN_RULES.maxRenewals && book.waitingReservations === 0
-        action = canRenew ? (
-          <ActionButton action={renewLoanAction} hidden={{ loanId: loan.id, slug: book.slug }} className="btn btn--block">
-            <RefreshCw aria-hidden="true" />
-            Renovar {LOAN_RULES.loanDays} días más
-          </ActionButton>
-        ) : null
         help = (
           <p className={styles.panelHelp}>
-            {display === 'overdue'
-              ? 'Devuélvelo en el mostrador cuanto antes: mientras esté vencido no podrás pedir otros libros.'
-              : canRenew
-                ? `Renovaciones usadas: ${loan.renewals} de ${LOAN_RULES.maxRenewals}.`
-                : book.waitingReservations > 0
-                  ? 'Otra persona lo está esperando, así que no se puede renovar.'
-                  : `Ya usaste las ${LOAN_RULES.maxRenewals} renovaciones.`}
+            {display === 'overdue' ? (
+              <>
+                Llevas {describeLate(fine.days)}: la multa va en <strong>{formatCOP(fine.amount)}</strong> y sube{' '}
+                {formatCOP(FINE_RULES.dailyFine)} cada día. Devuélvelo en el mostrador cuanto antes.
+              </>
+            ) : (
+              <>
+                <Lock aria-hidden="true" width={14} height={14} /> Plazo fijo de {loan.loanDays} días: no se renueva. Si lo
+                devuelves tarde, cada día suma {formatCOP(FINE_RULES.dailyFine)}.
+              </>
+            )}
           </p>
         )
       }
@@ -137,29 +136,43 @@ export async function BorrowPanel({ book, user }: { book: BookDetail; user: Sess
           <CircleAlert aria-hidden="true" /> {eligibility.reason}
         </p>
       )
-      action = (
+      action = eligibility.missingIdentity ? (
+        <Link href="/cuenta/perfil#datos-prestamo" className="btn btn--block">
+          Completar mis datos
+        </Link>
+      ) : (
         <Link href="/cuenta" className="btn btn--secondary btn--block">
           Ver mis préstamos
         </Link>
       )
     } else if (free > 0) {
+      const cards = await listLoanCards(user.id)
       status = (
         <p className={styles.panelStatus}>
           {free === 1 ? 'Queda 1 ejemplar disponible.' : `Hay ${free} ejemplares disponibles.`}
         </p>
       )
       action = (
-        <ActionButton action={requestLoanAction} hidden={hidden} className="btn btn--block" pendingLabel="Enviando…">
-          <HandHelping aria-hidden="true" />
-          Solicitar préstamo
-        </ActionButton>
+        <BorrowRequest
+          action={requestLoanAction}
+          mode="request"
+          bookId={book.id}
+          slug={book.slug}
+          title={book.title}
+          pageCount={book.pageCount}
+          cards={cards}
+          triggerLabel="Solicitar préstamo"
+          triggerIcon={<HandHelping aria-hidden="true" />}
+        />
       )
       help = (
         <p className={styles.panelHelp}>
-          Lo apartamos en el mostrador y tienes {LOAN_RULES.pickupDays} días para recogerlo.
+          Eliges el plazo ({LOAN_RULES.loanPeriods.join(', ')} días) y el carné. Tienes {LOAN_RULES.pickupDays} días para
+          recogerlo.
         </p>
       )
     } else {
+      const cards = await listLoanCards(user.id)
       status = (
         <p className={styles.panelStatus}>
           Todos los ejemplares están prestados
@@ -169,10 +182,17 @@ export async function BorrowPanel({ book, user }: { book: BookDetail; user: Sess
         </p>
       )
       action = (
-        <ActionButton action={reserveAction} hidden={hidden} className="btn btn--block" pendingLabel="Reservando…">
-          <BookmarkPlus aria-hidden="true" />
-          Reservar
-        </ActionButton>
+        <BorrowRequest
+          action={reserveAction}
+          mode="reserve"
+          bookId={book.id}
+          slug={book.slug}
+          title={book.title}
+          pageCount={book.pageCount}
+          cards={cards}
+          triggerLabel="Reservar"
+          triggerIcon={<BookmarkPlus aria-hidden="true" />}
+        />
       )
       help = <p className={styles.panelHelp}>Cuando vuelva un ejemplar, lo apartamos para ti y te avisamos.</p>
     }

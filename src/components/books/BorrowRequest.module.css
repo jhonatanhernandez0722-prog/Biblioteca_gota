@@ -1,0 +1,110 @@
+.dialog {
+  width: min(100% - 32px, 560px);
+  overflow-y: auto;
+}
+
+.group {
+  display: grid;
+  gap: var(--s-3);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+
+.group > legend {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin-bottom: var(--s-3);
+  padding: 0;
+}
+
+.group > legend svg {
+  width: 18px;
+  height: 18px;
+  color: var(--water-deep);
+}
+
+/* Plazos: tres tarjetas grandes y fáciles de pulsar en el móvil. */
+.periods {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--s-3);
+}
+
+.period {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+  padding: var(--s-4) var(--s-2) var(--s-3);
+  border: 1.5px solid var(--line-strong);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  cursor: pointer;
+  transition:
+    border-color var(--t-fast) var(--ease-out),
+    background-color var(--t-fast) var(--ease-out);
+}
+
+.period:hover {
+  border-color: var(--ink-2);
+}
+
+.period[data-checked='true'] {
+  border-color: var(--water-deep);
+  background: var(--water-tint);
+  box-shadow: inset 0 0 0 1px var(--water-deep);
+}
+
+.period:has(input:focus-visible) {
+  outline: 3px solid color-mix(in srgb, var(--water) 55%, transparent);
+  outline-offset: 2px;
+}
+
+.period input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.periodDays {
+  font-family: var(--font-serif);
+  font-size: 2rem;
+  line-height: 1;
+  color: var(--ink);
+}
+
+.periodUnit {
+  font-size: var(--fs-meta);
+  font-weight: 650;
+  color: var(--muted);
+}
+
+.periodTag {
+  position: absolute;
+  top: -10px;
+  padding: 1px 8px;
+  border-radius: var(--r-pill);
+  background: var(--ink);
+  color: var(--paper);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.cards {
+  display: grid;
+  gap: var(--s-3);
+}
+
+.cardNumber {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+
+.cardInput {
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}

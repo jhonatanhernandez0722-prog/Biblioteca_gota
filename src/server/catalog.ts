@@ -263,8 +263,13 @@ export interface BookSearchResult {
   pageSize: number
 }
 
-export async function searchBooks(params: BookSearchParams): Promise<BookSearchResult> {
-  const pageSize = Math.min(Math.max(params.pageSize ?? 24, 1), 100)
+type FacetKey = 'category' | 'availability' | 'language'
+
+/**
+ * Condiciones SQL de una búsqueda. `exclude` deja fuera un filtro: así se calculan los
+ * contadores de cada faceta («cuántos libros habría si eligieras esta categoría»).
+ */
+function buildFilters(params: BookSearchParams, exclude?: FacetKey) {
   const where: string[] = []
   const values: Record<string, SqlValue> = {}
 
@@ -276,7 +281,7 @@ export async function searchBooks(params: BookSearchParams): Promise<BookSearchR
 
   const q = params.q?.trim() ?? ''
   let hasTextQuery = false
-  // Parámetros solo de la ordenación por relevancia: node:sqlite rechaza parámetros que la consulta no usa.
+  // Parámetros solo de la ordenación por relevancia: no se pasan a consultas que no los usan.
   const relevanceValues: Record<string, SqlValue> = {}
   if (q) {
     const isbn = looksLikeIsbn(q) ? normalizeIsbn(q) : null
@@ -298,16 +303,66 @@ export async function searchBooks(params: BookSearchParams): Promise<BookSearchR
     }
   }
 
-  if (params.category) {
+  if (params.category && exclude !== 'category') {
     where.push(`EXISTS (SELECT 1 FROM book_categories bc JOIN categories c ON c.id = bc.category_id
                         WHERE bc.book_id = b.id AND c.slug = :category)`)
     values.category = params.category
   }
-  if (params.availability === 'available') where.push(FREE_COPIES_CONDITION)
-  if (params.language) {
+  if (params.availability === 'available' && exclude !== 'availability') where.push(FREE_COPIES_CONDITION)
+  if (params.language && exclude !== 'language') {
     where.push('b.language = :language')
     values.language = params.language
   }
+  return { where, values, hasTextQuery, relevanceValues }
+}
+
+export interface SearchFacets {
+  /** slug de categoría → libros que cumplen el resto de filtros y están en esa categoría. */
+  categories: Record<string, number>
+  /** código de idioma → libros. */
+  languages: Record<string, number>
+  /** Con el resto de filtros: todos los libros y los que tienen ejemplar libre. */
+  availability: { all: number; available: number }
+}
+
+/**
+ * Contadores dinámicos de cada filtro según la búsqueda y los demás filtros aplicados.
+ * Cada faceta ignora su propio filtro para que se vea cuántos libros daría cambiarlo.
+ */
+export async function searchFacets(params: BookSearchParams): Promise<SearchFacets> {
+  const clause = (where: string[]) => (where.length ? `WHERE ${where.join(' AND ')}` : '')
+  const byCategory = buildFilters(params, 'category')
+  const byLanguage = buildFilters(params, 'language')
+  const byAvailability = buildFilters(params, 'availability')
+  const [categories, languages, all_, available] = await Promise.all([
+    all<{ slug: string; n: number }>(
+      `SELECT c.slug, COUNT(DISTINCT b.id) AS n FROM books b
+         JOIN book_categories bc ON bc.book_id = b.id
+         JOIN categories c ON c.id = bc.category_id
+       ${clause(byCategory.where)} GROUP BY c.slug`,
+      byCategory.values,
+    ),
+    all<{ code: string; n: number }>(
+      `SELECT b.language AS code, COUNT(*) AS n FROM books b
+       ${clause([...byLanguage.where, 'b.language IS NOT NULL'])} GROUP BY b.language`,
+      byLanguage.values,
+    ),
+    get<{ n: number }>(`SELECT COUNT(*) AS n FROM books b ${clause(byAvailability.where)}`, byAvailability.values),
+    get<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM books b ${clause([...byAvailability.where, FREE_COPIES_CONDITION])}`,
+      byAvailability.values,
+    ),
+  ])
+  return {
+    categories: Object.fromEntries(categories.map((r) => [r.slug, r.n])),
+    languages: Object.fromEntries(languages.map((r) => [r.code, r.n])),
+    availability: { all: all_?.n ?? 0, available: available?.n ?? 0 },
+  }
+}
+
+export async function searchBooks(params: BookSearchParams): Promise<BookSearchResult> {
+  const pageSize = Math.min(Math.max(params.pageSize ?? 24, 1), 100)
+  const { where, values, hasTextQuery, relevanceValues } = buildFilters(params)
 
   const clause = where.length ? `WHERE ${where.join(' AND ')}` : ''
   const total = (await get<{ n: number }>(`SELECT COUNT(*) AS n FROM books b ${clause}`, values))?.n ?? 0

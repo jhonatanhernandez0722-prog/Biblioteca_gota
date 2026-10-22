@@ -257,3 +257,83 @@
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* Atrasos y multas: el total arriba, en grande; el desglose debajo. */
+.fines {
+  display: grid;
+  gap: var(--s-6);
+  padding: clamp(20px, 3vw, 32px);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent);
+}
+
+.finesTotals {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
+  gap: var(--s-4);
+}
+
+.fineStat {
+  display: grid;
+  gap: 2px;
+  padding: var(--s-4);
+  border-radius: var(--r-md);
+  background: var(--paper-deep);
+}
+
+.fineStatStrong {
+  background: var(--danger-tint);
+}
+
+.fineStatLabel {
+  font-size: var(--fs-meta);
+  font-weight: 650;
+  color: var(--ink-2);
+}
+
+.fineStatValue {
+  font-family: var(--font-serif);
+  font-size: 1.75rem;
+  line-height: 1.15;
+  font-variant-numeric: tabular-nums;
+}
+
+.fineStatStrong .fineStatValue {
+  color: var(--danger);
+}
+
+.fineStatHint {
+  font-size: var(--fs-meta);
+  color: var(--muted);
+}
+
+.formula {
+  font-variant-numeric: tabular-nums;
+}
+
+@media (min-width: 600px) {
+  .formula {
+    white-space: nowrap;
+  }
+}
+
+.term {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-meta);
+  font-weight: 650;
+  color: var(--ink-2);
+}
+
+.term svg {
+  width: 14px;
+  height: 14px;
+}
+
+.fineAccrued {
+  font-size: var(--fs-small);
+  font-weight: 700;
+  color: var(--danger);
+}

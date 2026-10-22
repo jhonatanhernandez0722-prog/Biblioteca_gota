@@ -1,11 +1,12 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
-import { LOAN_RULES, MAX_TOTAL_LOAN_DAYS } from '@/lib/rules'
+import { fineAmount, formatCOP } from '@/lib/fines'
+import { FINE_RULES, LOAN_RULES } from '@/lib/rules'
 import styles from '../prose.module.css'
 
 export const metadata: Metadata = {
   title: 'Cómo funciona el préstamo',
-  description: 'Pide, recoge, renueva y devuelve libros en Biblioteca Gota Gota: plazos y reglas del préstamo.',
+  description: 'Pide, recoge y devuelve libros en Biblioteca Gota Gota: plazos de lectura, multas y reglas del préstamo.',
 }
 
 const QUESTIONS = [
@@ -22,12 +23,20 @@ const QUESTIONS = [
     a: `Resérvalo. Cuando vuelva un ejemplar, se aparta automáticamente para la primera persona de la lista y le avisamos por correo. Tendrás ${LOAN_RULES.pickupDays} días para recogerlo.`,
   },
   {
-    q: '¿Puedo renovar un préstamo?',
-    a: `Sí, hasta ${LOAN_RULES.maxRenewals} veces, cada una de ${LOAN_RULES.loanDays} días, siempre que el préstamo no haya vencido y nadie esté esperando ese libro. Se hace desde «Mis préstamos».`,
+    q: '¿Puedo renovar o cambiar el plazo?',
+    a: `No. Al pedir el libro eliges entre ${LOAN_RULES.loanPeriods.join(', ')} días, y ese plazo queda fijo en cuanto confirmas: no se amplía ni se renueva. Si dudas, la calculadora de cada ficha te sugiere un plazo según tu ritmo de lectura.`,
   },
   {
     q: '¿Qué pasa si me retraso al devolverlo?',
-    a: 'Mientras tengas un préstamo vencido no podrás pedir otros libros. Devuélvelo en el mostrador y podrás seguir pidiendo con normalidad.',
+    a: `Cada día de retraso suma ${formatCOP(FINE_RULES.dailyFine)} de multa, y mientras tengas un préstamo vencido o una multa pendiente no podrás pedir otros libros. Tu cuenta muestra la multa acumulada día a día; se paga en el mostrador.`,
+  },
+  {
+    q: '¿Qué datos necesito para pedir libros?',
+    a: 'Además de tu nombre y correo, un número de teléfono, tu documento de identidad (cédula de ciudadanía o tarjeta de identidad) y una tarjeta de crédito como respaldo. De la tarjeta solo guardamos la franquicia y los últimos cuatro dígitos, y nunca se le hacen cargos.',
+  },
+  {
+    q: '¿Puedo usar otro carné?',
+    a: 'Sí. Al pedir un libro puedes elegir uno de los carnés guardados en tu cuenta o escribir otro número; lo guardamos para la próxima vez. Los gestionas en «Mi perfil».',
   },
   {
     q: '¿Qué pasa si no recojo un libro apartado?',
@@ -55,18 +64,48 @@ export default function HowItWorksPage() {
               <Link href="/explorar">el catálogo</Link>. En cada ficha verás si hay ejemplares en la estantería.
             </li>
             <li>
-              <strong>Pídelo desde tu cuenta.</strong> Con un botón envías la solicitud. Si todos los ejemplares están
-              prestados, puedes reservarlo y entrar en la lista de espera.
+              <strong>Pídelo desde tu cuenta.</strong> Eliges el plazo de lectura ({LOAN_RULES.loanPeriods.join(', ')}{' '}
+              días) y el carné, y confirmas. Si todos los ejemplares están prestados, puedes reservarlo y entrar en la
+              lista de espera.
             </li>
             <li>
               <strong>Recógelo en el mostrador.</strong> El equipo aparta un ejemplar para ti y te avisa por correo.
               Tienes {LOAN_RULES.pickupDays} días para recogerlo con tu número de carné.
             </li>
             <li>
-              <strong>Léelo y devuélvelo.</strong> El préstamo dura {LOAN_RULES.loanDays} días desde que lo recoges. Tu
-              cuenta muestra la fecha de devolución y te deja renovarlo.
+              <strong>Léelo y devuélvelo.</strong> El plazo que elegiste cuenta desde que lo recoges y no cambia. Tu
+              cuenta muestra la fecha de devolución y, si te retrasas, la multa acumulada.
             </li>
           </ol>
+
+          <h2>Multas por mora</h2>
+          <p>
+            Cada día natural de retraso cuesta <strong>{formatCOP(FINE_RULES.dailyFine)}</strong>. El sistema lo calcula
+            solo: <strong>multa = días de retraso × {formatCOP(FINE_RULES.dailyFine)}</strong>.
+          </p>
+          <div className="table-wrap">
+            <table className="table">
+              <caption className="visually-hidden">Ejemplos de multas por días de retraso</caption>
+              <thead>
+                <tr>
+                  <th scope="col">Días de retraso</th>
+                  <th scope="col" className="num">
+                    Multa
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {[1, 3, 7, 10].map((d) => (
+                  <tr key={d}>
+                    <td>
+                      {d} {d === 1 ? 'día' : 'días'}
+                    </td>
+                    <td className="num">{formatCOP(fineAmount(d))}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
 
           <h2>Preguntas frecuentes</h2>
           <div className={styles.qa}>
@@ -88,16 +127,16 @@ export default function HowItWorksPage() {
           <h2 id="plazos">Plazos</h2>
           <dl className={styles.facts}>
             <div>
-              <dt>Préstamo</dt>
-              <dd>{LOAN_RULES.loanDays} días</dd>
+              <dt>Plazo de lectura</dt>
+              <dd>{LOAN_RULES.loanPeriods.join(', ')} días</dd>
             </div>
             <div>
               <dt>Renovaciones</dt>
-              <dd>Hasta {LOAN_RULES.maxRenewals}</dd>
+              <dd>No: plazo fijo</dd>
             </div>
             <div>
-              <dt>Máximo con renovaciones</dt>
-              <dd>{MAX_TOTAL_LOAN_DAYS} días</dd>
+              <dt>Multa por día de retraso</dt>
+              <dd>{formatCOP(FINE_RULES.dailyFine)}</dd>
             </div>
             <div>
               <dt>Para recoger un apartado</dt>

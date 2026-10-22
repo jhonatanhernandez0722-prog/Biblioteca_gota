@@ -126,9 +126,21 @@ async function main() {
     expect((await page.getByLabel('Correo electrónico').inputValue()) === reader.email, 'Se perdió el correo tras el error')
   })
 
+  await step('El registro exige teléfono, documento y una tarjeta válida', async () => {
+    await page.locator('input[name="password"]').fill(reader.password)
+    await page.locator('input[name="confirm"]').fill(reader.password)
+    await page.getByLabel('Número de teléfono').fill('300 555 0101')
+    await page.getByLabel('Documento', { exact: true }).selectOption('CC')
+    await page.getByLabel('Número de documento').fill(String(Date.now()).slice(-9).replace(/^0/, '1'))
+    await page.getByLabel('Tarjeta de crédito').fill('4242 4242 4242 4241')
+    await page.getByRole('button', { name: 'Crear cuenta' }).click()
+    await page.getByText('Ese número de tarjeta no es válido').first().waitFor()
+  })
+
   await step('Crear cuenta inicia sesión y da la bienvenida', async () => {
     await page.locator('input[name="password"]').fill(reader.password)
     await page.locator('input[name="confirm"]').fill(reader.password)
+    await page.getByLabel('Tarjeta de crédito').fill('4242 4242 4242 4242')
     await page.locator('input[name="terms"]').check()
     await Promise.all([page.waitForURL(/\/cuenta$/), page.getByRole('button', { name: 'Crear cuenta' }).click()])
     expect((await toastText(page)).includes('Te damos la bienvenida'), 'Falta el aviso de bienvenida')
@@ -137,14 +149,21 @@ async function main() {
   await step('Solicitar un préstamo desde la ficha', async () => {
     await page.goto(`${BASE}/libros/${available!.slug}`)
     await page.getByRole('button', { name: 'Solicitar préstamo' }).click()
-    expect((await toastText(page)).includes('Solicitud enviada'), 'Falta la confirmación')
-    await page.getByText(/Pediste este libro el/).waitFor()
+    const dialog = page.locator('dialog[open]')
+    await dialog.getByText('7', { exact: true }).click()
+    await dialog.getByLabel(/no se podrá cambiar/).check()
+    await dialog.getByRole('button', { name: 'Confirmar préstamo · 7 días' }).click()
+    expect((await toastText(page)).includes('Solicitud enviada por 7 días'), 'Falta la confirmación')
+    await page.getByText(/Pediste este libro el .* por 7 días/).waitFor()
   })
 
   await step('Reservar un libro sin ejemplares libres', async () => {
     if (!unavailable) return 'skip'
     await page.goto(`${BASE}/libros/${unavailable.slug}`)
-    await page.getByRole('button', { name: 'Reservar' }).click()
+    await page.getByRole('button', { name: 'Reservar', exact: true }).click()
+    const dialog = page.locator('dialog[open]')
+    await dialog.getByLabel(/no se podrá cambiar/).check()
+    await dialog.getByRole('button', { name: /^Reservar · \d+ días$/ }).click()
     expect((await toastText(page)).includes('Reserva hecha'), 'Falta la confirmación de la reserva')
   })
 

@@ -1,6 +1,7 @@
 import type {
   CopyCondition,
   CopyStatus,
+  FineStatus,
   LoanStatus,
   ReservationStatus,
   Role,
@@ -68,6 +69,12 @@ export const RESERVATION_STATUS: Record<ReservationStatus, { label: string; tone
   waiting: { label: 'En espera', tone: 'info' },
   fulfilled: { label: 'Atendida', tone: 'success' },
   cancelled: { label: 'Cancelada', tone: 'neutral' },
+}
+
+export const FINE_STATUS: Record<FineStatus, { label: string; tone: Tone }> = {
+  pending: { label: 'Por pagar', tone: 'danger' },
+  paid: { label: 'Pagada', tone: 'success' },
+  waived: { label: 'Condonada', tone: 'neutral' },
 }
 
 export const ROLE_LABEL: Record<Role, string> = {

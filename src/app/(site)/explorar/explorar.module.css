@@ -213,3 +213,19 @@
     padding-inline: var(--s-4);
   }
 }
+
+/* Opciones sin resultados con los filtros actuales: visibles, pero apagadas. */
+.fieldset :global(.check[data-empty='true']) {
+  color: var(--muted);
+  cursor: not-allowed;
+}
+
+.fieldset :global(.check[data-empty='true']) .optionCount {
+  color: #9aa6b5;
+}
+
+/* La búsqueda en vivo se nota: los resultados se atenúan un instante mientras llegan. */
+.layout:has([data-pending]) .results {
+  opacity: 0.6;
+  transition: opacity var(--t-base) var(--ease-out);
+}

@@ -4,49 +4,59 @@ import Link from 'next/link'
 import {
   approveLoanAction,
   checkoutLoanAction,
+  payFineAction,
   rejectLoanAction,
   returnLoanAction,
   staffCancelLoanAction,
   staffCancelReservationAction,
-  staffRenewLoanAction,
+  waiveFineAction,
 } from '@/actions/admin'
 import { AdminHeader, TabLinks } from '@/components/admin/AdminPage'
 import { ActionButton, ConfirmAction } from '@/components/ui/ConfirmAction'
 import { Pagination } from '@/components/ui/Pagination'
 import { calendarDaysFrom, describeDue, formatDate, formatShortDate } from '@/lib/dates'
-import { LOAN_RULES } from '@/lib/rules'
-import { LOAN_STATUS } from '@/lib/status'
+import { accruedFine, describeLate, formatCOP } from '@/lib/fines'
+import { FINE_RULES, LOAN_RULES } from '@/lib/rules'
+import { FINE_STATUS, LOAN_STATUS } from '@/lib/status'
 import type { LoanRecord } from '@/lib/types'
 import { requireStaff } from '@/server/auth/current-user'
 import {
   countStaffLoanViews,
   expireStalePickups,
+  listStaffFines,
   listStaffLoans,
   listWaitingReservations,
+  type StaffFineView,
   type StaffLoanView,
 } from '@/server/circulation'
 import styles from '../table-page.module.css'
 
 export const metadata = { title: 'Préstamos' }
 
-const VIEWS: { key: string; view: StaffLoanView | 'reservations'; label: string }[] = [
+const VIEWS: { key: string; view: StaffLoanView | 'reservations' | 'fines'; label: string }[] = [
   { key: 'solicitudes', view: 'requests', label: 'Solicitudes' },
   { key: 'recoger', view: 'pickup', label: 'Por recoger' },
   { key: 'activos', view: 'active', label: 'Prestados' },
   { key: 'vencidos', view: 'overdue', label: 'Vencidos' },
+  { key: 'multas', view: 'fines', label: 'Multas' },
   { key: 'reservas', view: 'reservations', label: 'Lista de espera' },
   { key: 'historial', view: 'history', label: 'Historial' },
 ]
 
 const PAGE_SIZE = 25
 
-function Reader({ loan }: { loan: Pick<LoanRecord, 'userId' | 'userName' | 'userCardNumber'> }) {
+function Reader({ loan }: { loan: Pick<LoanRecord, 'userId' | 'userName' | 'userCardNumber'> & { loanCardNumber?: string | null } }) {
+  // El carné con el que se pidió, si no es el principal, es el que se presenta en el mostrador.
+  const card = loan.loanCardNumber ?? loan.userCardNumber
   return (
     <div className={styles.person}>
       <Link href={`/admin/usuarios/${loan.userId}`} className={styles.rowTitle}>
         {loan.userName}
       </Link>
-      <span className="meta">{loan.userCardNumber}</span>
+      <span className="meta">
+        {card}
+        {card !== loan.userCardNumber ? ' (adicional)' : ''}
+      </span>
     </div>
   )
 }
@@ -84,7 +94,7 @@ function RejectButton({ loan, label = 'Rechazar' }: { loan: LoanRecord; label?: 
 export default async function LoansPage({
   searchParams,
 }: {
-  searchParams: Promise<{ vista?: string; q?: string; pagina?: string }>
+  searchParams: Promise<{ vista?: string; q?: string; pagina?: string; estado?: string }>
 }) {
   await requireStaff('/admin/prestamos')
   await expireStalePickups()
@@ -92,30 +102,36 @@ export default async function LoansPage({
   const current = VIEWS.find((v) => v.key === sp.vista) ?? VIEWS[0]!
   const q = sp.q?.trim().slice(0, 120) ?? ''
   const page = Math.max(1, Number.parseInt(sp.pagina ?? '1', 10) || 1)
+  const fineView: StaffFineView = sp.estado === 'saldadas' ? 'settled' : 'pending'
   const counts = await countStaffLoanViews()
 
   const tabs = VIEWS.map((v) => ({
     key: v.key,
     label: v.label,
     href: `/admin/prestamos?vista=${v.key}`,
-    count: v.view === 'reservations' ? counts.reservations : v.view === 'history' ? undefined : counts[v.view],
-    tone: v.view === 'overdue' ? ('danger' as const) : undefined,
+    count: v.view === 'history' ? undefined : counts[v.view],
+    tone: v.view === 'overdue' || v.view === 'fines' ? ('danger' as const) : undefined,
   }))
 
   const reservations = current.view === 'reservations' ? await listWaitingReservations({ q, page, pageSize: PAGE_SIZE }) : null
-  const loans = current.view !== 'reservations' ? await listStaffLoans({ view: current.view, q, page, pageSize: PAGE_SIZE }) : null
-  const total = reservations?.total ?? loans?.total ?? 0
+  const fines = current.view === 'fines' ? await listStaffFines({ view: fineView, q, page, pageSize: PAGE_SIZE }) : null
+  const loans =
+    current.view !== 'reservations' && current.view !== 'fines'
+      ? await listStaffLoans({ view: current.view, q, page, pageSize: PAGE_SIZE })
+      : null
+  const total = reservations?.total ?? fines?.total ?? loans?.total ?? 0
 
   return (
     <>
       <AdminHeader
         title="Préstamos"
-        description={`Préstamos de ${LOAN_RULES.loanDays} días, ${LOAN_RULES.maxRenewals} renovaciones y ${LOAN_RULES.pickupDays} días para recoger. Los apartados sin recoger caducan solos.`}
+        description={`Plazos de ${LOAN_RULES.loanPeriods.join(', ')} días que elige el lector y no se renuevan; ${LOAN_RULES.pickupDays} días para recoger; multa de ${formatCOP(FINE_RULES.dailyFine)} por día de retraso, generada al registrar la devolución.`}
       />
       <div className={styles.toolbar}>
         <TabLinks tabs={tabs} current={current.key} label="Vistas de préstamos" />
         <Form action="/admin/prestamos" className={styles.search} role="search">
           <input type="hidden" name="vista" value={current.key} />
+          {current.view === 'fines' && fineView === 'settled' ? <input type="hidden" name="estado" value="saldadas" /> : null}
           <label htmlFor="q" className="visually-hidden">
             Buscar por lector, carné, libro o ejemplar
           </label>
@@ -153,9 +169,14 @@ export default async function LoansPage({
                   <>
                     <th scope="col">Devolución</th>
                     <th scope="col" className="num">
-                      Renov.
+                      {current.view === 'overdue' ? 'Multa acumulada' : 'Plazo'}
                     </th>
                   </>
+                ) : null}
+                {current.view === 'requests' || current.view === 'pickup' ? (
+                  <th scope="col" className="num">
+                    Plazo
+                  </th>
                 ) : null}
                 {current.view === 'history' ? (
                   <>
@@ -188,6 +209,7 @@ export default async function LoansPage({
                     </td>
                   ) : null}
                   {current.view === 'pickup' ? <td>{formatDate(loan.pickupDeadline!)}</td> : null}
+                  {current.view === 'requests' || current.view === 'pickup' ? <td className="num">{loan.loanDays} días</td> : null}
                   {current.view === 'active' || current.view === 'overdue' ? (
                     <>
                       <td className={current.view === 'overdue' ? styles.late : undefined}>
@@ -197,7 +219,16 @@ export default async function LoansPage({
                         </span>
                       </td>
                       <td className="num">
-                        {loan.renewals}/{LOAN_RULES.maxRenewals}
+                        {current.view === 'overdue' ? (
+                          <>
+                            <strong className={styles.late}>{formatCOP(accruedFine(loan.dueAt!).amount)}</strong>
+                            <span className="meta" style={{ display: 'block' }}>
+                              {describeLate(accruedFine(loan.dueAt!).days)}
+                            </span>
+                          </>
+                        ) : (
+                          `${loan.loanDays} días`
+                        )}
                       </td>
                     </>
                   ) : null}
@@ -258,6 +289,13 @@ export default async function LoansPage({
                                     Ejemplar {loan.copyCode}, prestado a {loan.userName}. Si hay lista de espera, quedará apartado
                                     para la siguiente persona.
                                   </p>
+                                  {current.view === 'overdue' ? (
+                                    <p className="alert alert--warning">
+                                      Llega con {describeLate(accruedFine(loan.dueAt!).days)}: se generará una multa de{' '}
+                                      {accruedFine(loan.dueAt!).days} × {formatCOP(FINE_RULES.dailyFine)} ={' '}
+                                      <strong>{formatCOP(accruedFine(loan.dueAt!).amount)}</strong>.
+                                    </p>
+                                  ) : null}
                                   <label className="check">
                                     <input type="checkbox" name="toMaintenance" />
                                     Vuelve dañado: enviarlo a reparación
@@ -267,16 +305,121 @@ export default async function LoansPage({
                               confirmLabel="Registrar devolución"
                               confirmClassName="btn"
                             />
-                            {current.view === 'active' && loan.renewals < LOAN_RULES.maxRenewals ? (
-                              <ActionButton action={staffRenewLoanAction} hidden={{ loanId: loan.id }} className="btn btn--ghost btn--sm">
-                                Renovar
-                              </ActionButton>
-                            ) : null}
                           </>
                         ) : null}
                       </div>
                     </td>
                   ) : null}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
+
+      {fines ? (
+        <div className={styles.toolbar} style={{ marginBottom: 16 }}>
+          <TabLinks
+            tabs={[
+              { key: 'pending', label: 'Por cobrar', href: '/admin/prestamos?vista=multas' },
+              { key: 'settled', label: 'Saldadas', href: '/admin/prestamos?vista=multas&estado=saldadas' },
+            ]}
+            current={fineView}
+            label="Estado de las multas"
+          />
+          {fines.total ? (
+            <p className="meta">
+              {fines.total} {fines.total === 1 ? 'multa' : 'multas'} · {formatCOP(fines.amount)}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+
+      {fines && fines.fines.length ? (
+        <div className="table-wrap">
+          <table className="table">
+            <caption className="visually-hidden">Multas {fineView === 'pending' ? 'por cobrar' : 'saldadas'}</caption>
+            <thead>
+              <tr>
+                <th scope="col">Lector</th>
+                <th scope="col">Libro</th>
+                <th scope="col">Retraso</th>
+                <th scope="col" className="num">
+                  Multa
+                </th>
+                {fineView === 'settled' ? <th scope="col">Resultado</th> : null}
+                {fineView === 'pending' ? (
+                  <th scope="col" className="actions">
+                    <span className="visually-hidden">Acciones</span>
+                  </th>
+                ) : null}
+              </tr>
+            </thead>
+            <tbody>
+              {fines.fines.map((fine) => (
+                <tr key={fine.id}>
+                  <td>
+                    <div className={styles.person}>
+                      <Link href={`/admin/usuarios/${fine.userId}`} className={styles.rowTitle}>
+                        {fine.userName}
+                      </Link>
+                      <span className="meta">{fine.userCardNumber}</span>
+                    </div>
+                  </td>
+                  <td>
+                    {fine.bookTitle}
+                    <span className="meta" style={{ display: 'block' }}>
+                      Venció {formatShortDate(fine.dueAt)} · devuelto {formatShortDate(fine.returnedAt)}
+                    </span>
+                  </td>
+                  <td>{describeLate(fine.daysLate)}</td>
+                  <td className="num">
+                    <strong>{formatCOP(fine.amount)}</strong>
+                    <span className="meta" style={{ display: 'block' }}>
+                      {fine.daysLate} × {formatCOP(fine.dailyRate)}
+                    </span>
+                  </td>
+                  {fineView === 'settled' ? (
+                    <td>
+                      <span className={`badge badge--${FINE_STATUS[fine.status].tone}`}>{FINE_STATUS[fine.status].label}</span>
+                      <span className="meta" style={{ display: 'block' }}>
+                        {formatShortDate(fine.settledAt!)}
+                        {fine.settleNote ? ` · ${fine.settleNote}` : ''}
+                      </span>
+                    </td>
+                  ) : (
+                    <td className="actions">
+                      <div className={styles.rowActions}>
+                        <ConfirmAction
+                          action={payFineAction}
+                          hidden={{ fineId: fine.id }}
+                          triggerLabel="Registrar pago"
+                          triggerClassName="btn btn--sm"
+                          title={`Pago de ${formatCOP(fine.amount)}`}
+                          description={
+                            <p>
+                              {fine.userName} paga en el mostrador la multa por «{fine.bookTitle}» ({describeLate(fine.daysLate)}).
+                            </p>
+                          }
+                          confirmLabel="Registrar pago"
+                          confirmClassName="btn"
+                        />
+                        <ConfirmAction
+                          action={waiveFineAction}
+                          hidden={{ fineId: fine.id }}
+                          triggerLabel="Condonar"
+                          triggerClassName="btn btn--ghost btn--sm"
+                          title={`¿Condonar ${formatCOP(fine.amount)}?`}
+                          description={<p>La multa de {fine.userName} quedará saldada sin pago. El motivo queda registrado.</p>}
+                          reason={{
+                            label: 'Motivo',
+                            placeholder: 'Por ejemplo: la devolución se registró tarde por un error del mostrador.',
+                          }}
+                          confirmLabel="Condonar multa"
+                        />
+                      </div>
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>
@@ -338,7 +481,11 @@ export default async function LoansPage({
         page={page}
         pageCount={Math.max(1, Math.ceil(total / PAGE_SIZE))}
         basePath="/admin/prestamos"
-        params={{ vista: current.key, q: q || undefined }}
+        params={{
+          vista: current.key,
+          q: q || undefined,
+          estado: current.view === 'fines' && fineView === 'settled' ? 'saldadas' : undefined,
+        }}
       />
     </>
   )

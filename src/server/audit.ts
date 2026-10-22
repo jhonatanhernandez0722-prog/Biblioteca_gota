@@ -45,6 +45,7 @@ export const AUDIT_ENTITY_LABEL: Record<string, string> = {
   copy: 'Ejemplares',
   loan: 'Préstamos',
   reservation: 'Reservas',
+  fine: 'Multas',
   user: 'Usuarios',
 }
 

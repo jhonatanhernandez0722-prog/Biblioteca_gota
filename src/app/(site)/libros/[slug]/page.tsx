@@ -10,7 +10,8 @@ import { PaceCalculator } from '@/components/books/PaceCalculator'
 import { ShareButton } from '@/components/books/ShareButton'
 import { formatDate } from '@/lib/dates'
 import { languageName } from '@/lib/languages'
-import { LOAN_RULES } from '@/lib/rules'
+import { formatCOP } from '@/lib/fines'
+import { FINE_RULES, LOAN_RULES } from '@/lib/rules'
 import { COPY_CONDITION, COPY_STATUS, isStaff } from '@/lib/status'
 import { joinAuthors, truncate } from '@/lib/text'
 import { getCurrentUser } from '@/server/auth/current-user'
@@ -240,10 +241,13 @@ export default async function BookPage({ params }: { params: Params }) {
                 </h2>
                 <ul role="list">
                   <li>
-                    <strong>{LOAN_RULES.loanDays} días</strong> desde que lo recoges.
+                    <strong>Tú eliges el plazo:</strong> {LOAN_RULES.loanPeriods.join(', ')} días desde que lo recoges.
                   </li>
                   <li>
-                    <strong>{LOAN_RULES.maxRenewals} renovaciones</strong> si nadie lo está esperando.
+                    <strong>Plazo fijo:</strong> una vez confirmado no se cambia ni se renueva.
+                  </li>
+                  <li>
+                    <strong>{formatCOP(FINE_RULES.dailyFine)} por día</strong> de retraso en la devolución.
                   </li>
                   <li>
                     <strong>{LOAN_RULES.pickupDays} días</strong> para recogerlo una vez apartado.
@@ -264,8 +268,7 @@ export default async function BookPage({ params }: { params: Params }) {
               <PaceCalculator
                 title={book.title}
                 pageCount={book.pageCount}
-                loanDays={LOAN_RULES.loanDays}
-                maxRenewals={LOAN_RULES.maxRenewals}
+                periods={LOAN_RULES.loanPeriods}
               />
             </section>
           ) : null}

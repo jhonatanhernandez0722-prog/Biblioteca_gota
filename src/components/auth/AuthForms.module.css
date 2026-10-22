@@ -32,3 +32,88 @@
   gap: var(--s-2);
   margin-top: var(--s-2);
 }
+
+/* Datos para préstamos: un bloque aparte para que se entienda por qué se piden. */
+.identity {
+  display: grid;
+  gap: var(--s-4);
+  margin: 0;
+  padding: var(--s-6) 0 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+  min-width: 0;
+}
+
+.identityPlain {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.identityLegend {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  float: left;
+  width: 100%;
+  font-size: var(--fs-small);
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.identityLegend svg {
+  width: 18px;
+  height: 18px;
+  color: var(--water-deep);
+}
+
+.identityLegend + :global(.field-hint) {
+  margin-top: calc(-1 * var(--s-2));
+}
+
+.docRow {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  gap: var(--s-4);
+}
+
+@media (max-width: 480px) {
+  .docRow {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.cardField {
+  position: relative;
+}
+
+.cardField :global(.input) {
+  padding-left: 48px;
+  padding-right: 112px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+}
+
+.cardIcon {
+  position: absolute;
+  left: 16px;
+  top: 50%;
+  translate: 0 -50%;
+  width: 20px;
+  height: 20px;
+  color: var(--ink-2);
+  pointer-events: none;
+}
+
+.cardBrand {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  translate: 0 -50%;
+  padding: 2px 8px;
+  border-radius: var(--r-pill);
+  background: var(--ink-tint);
+  color: var(--ink-2);
+  font-size: var(--fs-meta);
+  font-weight: 700;
+  pointer-events: none;
+}
