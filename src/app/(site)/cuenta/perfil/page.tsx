@@ -1,5 +1,6 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
+import { notFound } from 'next/navigation'
 import { ChangePasswordForm, ProfileForm } from '@/components/account/ProfileForms'
 import { formatDate } from '@/lib/dates'
 import { ROLE_LABEL } from '@/lib/status'
@@ -15,9 +16,10 @@ export const metadata: Metadata = { title: 'Mi perfil' }
 
 export default async function ProfilePage() {
   const session = await requireUser('/cuenta/perfil')
-  const user = getUserById(session.id)!
+  const user = await getUserById(session.id)
+  if (!user) notFound()
   const info = getLibraryInfo()
-  const consents = getConsentStates(user.id)
+  const consents = await getConsentStates(user.id)
   const party = getLegalParty()
 
   return (

@@ -23,9 +23,9 @@ function refresh(slug?: string) {
   if (slug) revalidatePath(`/libros/${slug}`)
 }
 
-async function run(fn: () => string, slug?: string): Promise<ActionState> {
+async function run(fn: () => Promise<string>, slug?: string): Promise<ActionState> {
   try {
-    const message = fn()
+    const message = await fn()
     refresh(slug)
     return { ok: true, message }
   } catch (error) {
@@ -40,8 +40,8 @@ export async function requestLoanAction(_: ActionState | null, formData: FormDat
   const parsed = bookForm.safeParse(Object.fromEntries(formData))
   if (!parsed.success) return { ok: false, message: 'No se pudo identificar el libro.' }
   const user = await requireUser(parsed.data.slug ? `/libros/${parsed.data.slug}` : undefined)
-  return run(() => {
-    requestLoan(user.id, parsed.data.bookId)
+  return await run(async () => {
+    await requestLoan(user.id, parsed.data.bookId)
     return 'Solicitud enviada. Te avisaremos cuando el libro esté listo para recoger.'
   }, parsed.data.slug)
 }
@@ -50,8 +50,8 @@ export async function reserveAction(_: ActionState | null, formData: FormData): 
   const parsed = bookForm.safeParse(Object.fromEntries(formData))
   if (!parsed.success) return { ok: false, message: 'No se pudo identificar el libro.' }
   const user = await requireUser(parsed.data.slug ? `/libros/${parsed.data.slug}` : undefined)
-  return run(() => {
-    const { position } = reserveBook(user.id, parsed.data.bookId)
+  return await run(async () => {
+    const { position } = await reserveBook(user.id, parsed.data.bookId)
     return position === 1
       ? 'Reserva hecha. Eres la siguiente persona en la lista: te avisaremos cuando vuelva un ejemplar.'
       : `Reserva hecha. Estás en el puesto ${position} de la lista de espera.`
@@ -64,8 +64,8 @@ export async function cancelLoanAction(_: ActionState | null, formData: FormData
   const parsed = loanForm.safeParse(Object.fromEntries(formData))
   if (!parsed.success) return { ok: false, message: 'No se pudo identificar la solicitud.' }
   const user = await requireUser('/cuenta')
-  return run(() => {
-    cancelLoan({ id: user.id, isStaff: false }, parsed.data.loanId)
+  return await run(async () => {
+    await cancelLoan({ id: user.id, isStaff: false }, parsed.data.loanId)
     return 'Solicitud cancelada.'
   }, parsed.data.slug)
 }
@@ -74,8 +74,8 @@ export async function renewLoanAction(_: ActionState | null, formData: FormData)
   const parsed = loanForm.safeParse(Object.fromEntries(formData))
   if (!parsed.success) return { ok: false, message: 'No se pudo identificar el préstamo.' }
   const user = await requireUser('/cuenta')
-  return run(() => {
-    const { dueAt } = renewLoan({ id: user.id, isStaff: false }, parsed.data.loanId)
+  return await run(async () => {
+    const { dueAt } = await renewLoan({ id: user.id, isStaff: false }, parsed.data.loanId)
     return `Préstamo renovado. Nueva fecha de devolución: ${formatDate(dueAt)}.`
   }, parsed.data.slug)
 }
@@ -86,8 +86,8 @@ export async function cancelReservationAction(_: ActionState | null, formData: F
   const parsed = reservationForm.safeParse(Object.fromEntries(formData))
   if (!parsed.success) return { ok: false, message: 'No se pudo identificar la reserva.' }
   const user = await requireUser('/cuenta')
-  return run(() => {
-    cancelReservation({ id: user.id, isStaff: false }, parsed.data.reservationId)
+  return await run(async () => {
+    await cancelReservation({ id: user.id, isStaff: false }, parsed.data.reservationId)
     return 'Saliste de la lista de espera.'
   }, parsed.data.slug)
 }
@@ -102,7 +102,7 @@ export async function updateProfileAction(_: ActionState | null, formData: FormD
   if (!parsed.success) {
     return { ok: false, message: 'Revisa el nombre.', fieldErrors: { name: parsed.error.issues[0]!.message } }
   }
-  updateProfileName(user.id, parsed.data.name)
+  await updateProfileName(user.id, parsed.data.name)
   revalidatePath('/cuenta', 'layout')
   return { ok: true, message: 'Perfil actualizado.' }
 }

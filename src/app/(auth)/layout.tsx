@@ -9,8 +9,8 @@ import styles from './auth.module.css'
 export const dynamic = 'force-dynamic'
 
 /** Acceso: un campo de tinta con portadas reales sobre el agua y el formulario sobre papel. */
-export default function AuthLayout({ children }: { children: React.ReactNode }) {
-  const covers = getHeroBooks(3)
+export default async function AuthLayout({ children }: { children: React.ReactNode }) {
+  const covers = await getHeroBooks(3)
   return (
     <div className={styles.shell}>
       <aside className={`${styles.brand} on-ink`}>

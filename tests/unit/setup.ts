@@ -8,7 +8,7 @@ import path from 'node:path'
  */
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gotagota-test-'))
 const env = process.env as Record<string, string>
-env.DATABASE_PATH = path.join(dir, 'test.db')
+env.DATABASE_URL = `pglite:${path.join(dir, 'test.db')}`
 env.STORAGE_DIR = path.join(dir, 'storage')
 env.NODE_ENV = 'test'
 env.MAIL_PROVIDER = 'console'

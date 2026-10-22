@@ -25,7 +25,7 @@ export default async function AdminBooksPage({ searchParams }: { searchParams: S
   const orden = sp.orden && SORTS[sp.orden] ? sp.orden : 'recientes'
   const page = Math.max(1, Number.parseInt(sp.pagina ?? '1', 10) || 1)
 
-  const result = searchBooks({
+  const result = await searchBooks({
     q,
     status: estado,
     category: categoria,
@@ -34,7 +34,7 @@ export default async function AdminBooksPage({ searchParams }: { searchParams: S
     page,
     pageSize: 25,
   })
-  const categories = listCategories()
+  const categories = await listCategories()
 
   return (
     <>

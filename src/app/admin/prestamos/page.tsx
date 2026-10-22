@@ -87,12 +87,12 @@ export default async function LoansPage({
   searchParams: Promise<{ vista?: string; q?: string; pagina?: string }>
 }) {
   await requireStaff('/admin/prestamos')
-  expireStalePickups()
+  await expireStalePickups()
   const sp = await searchParams
   const current = VIEWS.find((v) => v.key === sp.vista) ?? VIEWS[0]!
   const q = sp.q?.trim().slice(0, 120) ?? ''
   const page = Math.max(1, Number.parseInt(sp.pagina ?? '1', 10) || 1)
-  const counts = countStaffLoanViews()
+  const counts = await countStaffLoanViews()
 
   const tabs = VIEWS.map((v) => ({
     key: v.key,
@@ -102,8 +102,8 @@ export default async function LoansPage({
     tone: v.view === 'overdue' ? ('danger' as const) : undefined,
   }))
 
-  const reservations = current.view === 'reservations' ? listWaitingReservations({ q, page, pageSize: PAGE_SIZE }) : null
-  const loans = current.view !== 'reservations' ? listStaffLoans({ view: current.view, q, page, pageSize: PAGE_SIZE }) : null
+  const reservations = current.view === 'reservations' ? await listWaitingReservations({ q, page, pageSize: PAGE_SIZE }) : null
+  const loans = current.view !== 'reservations' ? await listStaffLoans({ view: current.view, q, page, pageSize: PAGE_SIZE }) : null
   const total = reservations?.total ?? loans?.total ?? 0
 
   return (

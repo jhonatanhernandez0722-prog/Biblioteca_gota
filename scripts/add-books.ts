@@ -17,12 +17,12 @@ async function main() {
   const covers = await import('@/server/covers')
   const { OpenLibraryProvider } = await import('@/server/integrations/metadata/open-library')
 
-  const staff = get<{ id: number }>(`SELECT id FROM users WHERE role IN ('librarian','admin') ORDER BY id LIMIT 1`)
+  const staff = await get<{ id: number }>(`SELECT id FROM users WHERE role IN ('librarian','admin') ORDER BY id LIMIT 1`)
   if (!staff) throw new Error('No hay personal de biblioteca: siembra primero la base de datos.')
   const provider = new OpenLibraryProvider(env().OPENLIBRARY_CONTACT_EMAIL)
 
   for (const seed of JUNJI_ITO_BOOKS) {
-    if (get('SELECT id FROM books WHERE title = ?', [seed.title])) {
+    if (await get('SELECT id FROM books WHERE title = ?', [seed.title])) {
       console.log(`  · ${seed.title}: ya está en el catálogo`)
       continue
     }
@@ -38,8 +38,11 @@ async function main() {
     } catch (error) {
       console.warn(`  · ${seed.title}: sin respuesta de Open Library (${(error as Error).message})`)
     }
-    const isbn = details?.isbn13 && !catalog.findPossibleDuplicates({ isbn: details.isbn13 }).exact.length ? details.isbn13 : null
-    const { id } = catalog.createBook(
+    const isbn =
+      details?.isbn13 && !(await catalog.findPossibleDuplicates({ isbn: details.isbn13 })).exact.length
+        ? details.isbn13
+        : null
+    const { id } = await catalog.createBook(
       {
         title: seed.title,
         authors: seed.authors,
@@ -62,12 +65,12 @@ async function main() {
     if (details?.coverUrl) {
       try {
         const stored = await covers.storeCover(await covers.fetchRemoteCover(details.coverUrl), { rejectFlat: true })
-        catalog.setBookCover(id, stored.key, stored.color, staff.id)
+        await catalog.setBookCover(id, stored.key, stored.color, staff.id)
       } catch (error) {
         console.warn(`  · ${seed.title}: portada no disponible (${(error as Error).message})`)
       }
     }
-    circulation.addCopies(staff.id, id, seed.copies, { location: 'Sala general, estante M (manga)' })
+    await circulation.addCopies(staff.id, id, seed.copies, { location: 'Sala general, estante M (manga)' })
     console.log(`  ✓ ${seed.title}${details ? ` (${details.publisher ?? 's. e.'}, ${details.year ?? seed.year})` : ''}`)
   }
 }

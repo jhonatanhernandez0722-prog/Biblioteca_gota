@@ -10,7 +10,7 @@ import { getReaderEligibility, getUserBookState } from '@/server/circulation'
 import styles from './book.module.css'
 
 /** La acción principal de la ficha cambia según quién mira y en qué punto está con este libro. */
-export function BorrowPanel({ book, user }: { book: BookDetail; user: SessionUser | null }) {
+export async function BorrowPanel({ book, user }: { book: BookDetail; user: SessionUser | null }) {
   const free = book.availableCopies
   const hasCopies = book.totalCopies > 0
   const next = `/libros/${book.slug}`
@@ -45,8 +45,8 @@ export function BorrowPanel({ book, user }: { book: BookDetail; user: SessionUse
       </p>
     )
   } else {
-    const state = getUserBookState(user.id, book.id)
-    const eligibility = getReaderEligibility(user.id)
+    const state = await getUserBookState(user.id, book.id)
+    const eligibility = await getReaderEligibility(user.id)
     const loan = state.loan
     if (loan) {
       const display = loanDisplayStatus(loan.status, loan.dueAt)

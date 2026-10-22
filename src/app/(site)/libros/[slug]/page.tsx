@@ -28,7 +28,7 @@ const PROVIDER_LABEL: Record<string, { name: string }> = {
 
 export async function generateMetadata({ params }: { params: Params }): Promise<Metadata> {
   const { slug } = await params
-  const book = getBookBySlug(slug)
+  const book = await getBookBySlug(slug)
   if (!book) return { title: 'Libro no encontrado' }
   const description = truncate(
     book.description ?? `${book.title}, de ${joinAuthors(book.authors)}. Disponible en Biblioteca Gota Gota.`,
@@ -46,13 +46,13 @@ export default async function BookPage({ params }: { params: Params }) {
   const { slug } = await params
   const user = await getCurrentUser()
   const staff = isStaff(user?.role)
-  expireStalePickups()
-  const book = getBookBySlug(slug, { includeArchived: staff })
+  await expireStalePickups()
+  const book = await getBookBySlug(slug, { includeArchived: staff })
   if (!book) notFound()
 
-  const related = getRelatedBooks(book, 10)
-  const copies = staff ? listCopies(book.id) : []
-  const circulation = staff ? getBookCirculation(book.id) : null
+  const related = await getRelatedBooks(book, 10)
+  const copies = staff ? await listCopies(book.id) : []
+  const circulation = staff ? await getBookCirculation(book.id) : null
   const mainCategory = book.categories[0]
   const source = PROVIDER_LABEL[book.sourceProvider]
 

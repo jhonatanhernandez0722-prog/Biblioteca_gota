@@ -8,7 +8,7 @@ export const metadata: Metadata = { title: 'Nueva contraseña', robots: { index:
 
 export default async function ResetPasswordPage({ searchParams }: { searchParams: Promise<{ token?: string }> }) {
   const { token } = await searchParams
-  const valid = typeof token === 'string' && token.length >= 20 && token.length <= 200 && isResetTokenValid(token)
+  const valid = typeof token === 'string' && token.length >= 20 && token.length <= 200 && await isResetTokenValid(token)
 
   if (!valid) {
     return (

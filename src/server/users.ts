@@ -1,5 +1,4 @@
 import { randomBytes } from 'node:crypto'
-import type { SQLInputValue } from 'node:sqlite'
 import type { Role, SessionUser, UserStatus } from '@/lib/types'
 import { ROLE_LABEL } from '@/lib/status'
 import { ACCOUNT_CONSENTS } from '@/lib/legal'
@@ -29,13 +28,13 @@ export function normalizeEmail(email: string): string {
 }
 
 /** Número de carné correlativo por año: GG-26-00042. */
-function nextCardNumber(): string {
+async function nextCardNumber(): Promise<string> {
   const year = String(new Date().getUTCFullYear()).slice(-2)
   const prefix = `GG-${year}-`
-  const last = get<{ card_number: string }>(
+  const last = (await get<{ card_number: string }>(
     'SELECT card_number FROM users WHERE card_number LIKE ? ORDER BY card_number DESC LIMIT 1',
     [`${prefix}%`],
-  )?.card_number
+  ))?.card_number
   const next = last ? Number(last.slice(prefix.length)) + 1 : 1
   return `${prefix}${String(next).padStart(5, '0')}`
 }
@@ -51,24 +50,24 @@ export async function registerUser(input: {
 }): Promise<SessionUser> {
   const email = normalizeEmail(input.email)
   const passwordHash = await hashPassword(input.password)
-  return transaction(() => {
-    if (get<{ id: number }>('SELECT id FROM users WHERE email = ?', [email])) {
+  return await transaction(async () => {
+    if (await get<{ id: number }>('SELECT id FROM users WHERE email = ?', [email])) {
       throw new DomainError('Ya existe una cuenta con ese correo. Inicia sesión o recupera tu contraseña.', 'email_taken', {
         email: 'Este correo ya tiene una cuenta.',
       })
     }
-    const cardNumber = nextCardNumber()
+    const cardNumber = await nextCardNumber()
     const role = input.role ?? 'reader'
-    const { lastInsertRowid: id } = run(
+    const { lastInsertRowid: id } = await run(
       `INSERT INTO users (name, email, password_hash, role, card_number, is_demo) VALUES (?, ?, ?, ?, ?, ?)`,
       [input.name.trim(), email, passwordHash, role, cardNumber, input.isDemo ? 1 : 0],
     )
     if (input.consents) {
       for (const c of ACCOUNT_CONSENTS) {
-        recordConsent({ userId: id, slug: c.slug, type: c.type, result: 'accepted', ...input.consents })
+        await recordConsent({ userId: id, slug: c.slug, type: c.type, result: 'accepted', ...input.consents })
       }
     }
-    logAudit({ actorId: id, action: 'user.registered', entityType: 'user', entityId: id, summary: 'Creó su cuenta de lector' })
+    await logAudit({ actorId: id, action: 'user.registered', entityType: 'user', entityId: id, summary: 'Creó su cuenta de lector' })
     return { id, name: input.name.trim(), email, role, status: 'active' as const, cardNumber }
   })
 }
@@ -76,7 +75,7 @@ export async function registerUser(input: {
 /** Comprueba credenciales en tiempo constante (también cuando el correo no existe). */
 export async function authenticate(emailInput: string, password: string): Promise<SessionUser | null> {
   const email = normalizeEmail(emailInput)
-  const user = get<UserRow>('SELECT * FROM users WHERE email = ?', [email])
+  const user = await get<UserRow>('SELECT * FROM users WHERE email = ?', [email])
   const ok = await verifyPassword(password, user?.password_hash ?? (await getDummyHash()))
   if (!user || !ok) return null
   if (user.status !== 'active') {
@@ -92,13 +91,13 @@ export async function authenticate(emailInput: string, password: string): Promis
   }
 }
 
-export function updateProfileName(userId: number, name: string) {
-  run('UPDATE users SET name = ?, updated_at = ? WHERE id = ?', [name.trim(), now(), userId])
-  logAudit({ actorId: userId, action: 'user.profile_updated', entityType: 'user', entityId: userId, summary: 'Actualizó su perfil' })
+export async function updateProfileName(userId: number, name: string) {
+  await run('UPDATE users SET name = ?, updated_at = ? WHERE id = ?', [name.trim(), now(), userId])
+  await logAudit({ actorId: userId, action: 'user.profile_updated', entityType: 'user', entityId: userId, summary: 'Actualizó su perfil' })
 }
 
 export async function changePassword(userId: number, current: string, next: string, keepToken?: string) {
-  const user = get<UserRow>('SELECT * FROM users WHERE id = ?', [userId])
+  const user = await get<UserRow>('SELECT * FROM users WHERE id = ?', [userId])
   if (!user) throw new DomainError('La cuenta ya no existe.', 'not_found')
   if (!(await verifyPassword(current, user.password_hash))) {
     throw new DomainError('La contraseña actual no es correcta.', 'wrong_password', {
@@ -106,9 +105,9 @@ export async function changePassword(userId: number, current: string, next: stri
     })
   }
   const hash = await hashPassword(next)
-  run('UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?', [hash, now(), userId])
-  deleteUserSessions(userId, keepToken)
-  logAudit({ actorId: userId, action: 'user.password_changed', entityType: 'user', entityId: userId, summary: 'Cambió su contraseña' })
+  await run('UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?', [hash, now(), userId])
+  await deleteUserSessions(userId, keepToken)
+  await logAudit({ actorId: userId, action: 'user.password_changed', entityType: 'user', entityId: userId, summary: 'Cambió su contraseña' })
 }
 
 const RESET_TTL_MS = 60 * 60 * 1000
@@ -117,18 +116,18 @@ const RESET_TTL_MS = 60 * 60 * 1000
  * Crea un enlace de un solo uso válido una hora y lo envía por correo.
  * Responde igual exista o no la cuenta, para no revelar qué correos están registrados.
  */
-export function requestPasswordReset(emailInput: string) {
+export async function requestPasswordReset(emailInput: string) {
   const email = normalizeEmail(emailInput)
-  const user = get<UserRow>('SELECT * FROM users WHERE email = ?', [email])
+  const user = await get<UserRow>('SELECT * FROM users WHERE email = ?', [email])
   if (!user || user.status !== 'active') return
   const token = randomBytes(32).toString('base64url')
-  run('DELETE FROM password_resets WHERE user_id = ? AND used_at IS NULL', [user.id])
-  run('INSERT INTO password_resets (user_id, token_hash, expires_at) VALUES (?, ?, ?)', [
+  await run('DELETE FROM password_resets WHERE user_id = ? AND used_at IS NULL', [user.id])
+  await run('INSERT INTO password_resets (user_id, token_hash, expires_at) VALUES (?, ?, ?)', [
     user.id,
     hashToken(token),
     new Date(Date.now() + RESET_TTL_MS).toISOString(),
   ])
-  logAudit({ actorId: user.id, action: 'user.reset_requested', entityType: 'user', entityId: user.id, summary: 'Pidió restablecer su contraseña' })
+  await logAudit({ actorId: user.id, action: 'user.reset_requested', entityType: 'user', entityId: user.id, summary: 'Pidió restablecer su contraseña' })
   sendInBackground({
     to: user.email,
     subject: 'Restablece tu contraseña de Biblioteca Gota Gota',
@@ -145,8 +144,8 @@ export function requestPasswordReset(emailInput: string) {
   })
 }
 
-export function isResetTokenValid(token: string): boolean {
-  const row = get<{ expires_at: string; used_at: string | null }>(
+export async function isResetTokenValid(token: string): Promise<boolean> {
+  const row = await get<{ expires_at: string; used_at: string | null }>(
     'SELECT expires_at, used_at FROM password_resets WHERE token_hash = ?',
     [hashToken(token)],
   )
@@ -155,18 +154,18 @@ export function isResetTokenValid(token: string): boolean {
 
 export async function resetPassword(token: string, password: string) {
   const hash = await hashPassword(password)
-  transaction(() => {
-    const row = get<{ id: number; user_id: number; expires_at: string; used_at: string | null }>(
+  await transaction(async () => {
+    const row = await get<{ id: number; user_id: number; expires_at: string; used_at: string | null }>(
       'SELECT id, user_id, expires_at, used_at FROM password_resets WHERE token_hash = ?',
       [hashToken(token)],
     )
     if (!row || row.used_at || new Date(row.expires_at).getTime() <= Date.now()) {
       throw new DomainError('El enlace caducó o ya se usó. Pide uno nuevo.', 'invalid_token')
     }
-    run('UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?', [hash, now(), row.user_id])
-    run('UPDATE password_resets SET used_at = ? WHERE id = ?', [now(), row.id])
-    deleteUserSessions(row.user_id)
-    logAudit({ actorId: row.user_id, action: 'user.password_reset', entityType: 'user', entityId: row.user_id, summary: 'Restableció su contraseña' })
+    await run('UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?', [hash, now(), row.user_id])
+    await run('UPDATE password_resets SET used_at = ? WHERE id = ?', [now(), row.id])
+    await deleteUserSessions(row.user_id)
+    await logAudit({ actorId: row.user_id, action: 'user.password_reset', entityType: 'user', entityId: row.user_id, summary: 'Restableció su contraseña' })
   })
 }
 
@@ -185,9 +184,9 @@ export interface UserListItem {
   isDemo: boolean
 }
 
-export function listUsers(options: { q?: string; role?: Role; status?: UserStatus; page: number; pageSize: number }) {
+export async function listUsers(options: { q?: string; role?: Role; status?: UserStatus; page: number; pageSize: number }) {
   const where: string[] = []
-  const params: Record<string, SQLInputValue> = {}
+  const params: Record<string, string | number> = {}
   if (options.q?.trim()) {
     where.push('(u.name LIKE :q OR u.email LIKE :q OR u.card_number LIKE :q)')
     params.q = `%${options.q.trim()}%`
@@ -201,8 +200,8 @@ export function listUsers(options: { q?: string; role?: Role; status?: UserStatu
     params.status = options.status
   }
   const clause = where.length ? `WHERE ${where.join(' AND ')}` : ''
-  const total = get<{ n: number }>(`SELECT COUNT(*) AS n FROM users u ${clause}`, params)?.n ?? 0
-  const rows = all<UserRow & { active_loans: number; overdue_loans: number }>(
+  const total = (await get<{ n: number }>(`SELECT COUNT(*) AS n FROM users u ${clause}`, params))?.n ?? 0
+  const rows = await all<UserRow & { active_loans: number; overdue_loans: number }>(
     `SELECT u.*,
        (SELECT COUNT(*) FROM loans l WHERE l.user_id = u.id AND l.status IN ('pending','approved','checked_out')) AS active_loans,
        (SELECT COUNT(*) FROM loans l WHERE l.user_id = u.id AND l.status = 'checked_out' AND l.due_at < :now) AS overdue_loans
@@ -225,8 +224,8 @@ export function listUsers(options: { q?: string; role?: Role; status?: UserStatu
   return { users, total }
 }
 
-export function getUserById(id: number): UserListItem | null {
-  const row = get<UserRow & { active_loans: number; overdue_loans: number }>(
+export async function getUserById(id: number): Promise<UserListItem | null> {
+  const row = await get<UserRow & { active_loans: number; overdue_loans: number }>(
     `SELECT u.*,
        (SELECT COUNT(*) FROM loans l WHERE l.user_id = u.id AND l.status IN ('pending','approved','checked_out')) AS active_loans,
        (SELECT COUNT(*) FROM loans l WHERE l.user_id = u.id AND l.status = 'checked_out' AND l.due_at < ?) AS overdue_loans
@@ -249,18 +248,18 @@ export function getUserById(id: number): UserListItem | null {
 }
 
 /** Solo administración. No se puede cambiar el propio rol ni dejar la biblioteca sin administradores. */
-export function setUserRole(adminId: number, userId: number, role: Role) {
-  transaction(() => {
+export async function setUserRole(adminId: number, userId: number, role: Role) {
+  await transaction(async () => {
     if (adminId === userId) throw new DomainError('No puedes cambiar tu propio rol.', 'self')
-    const user = get<UserRow>('SELECT * FROM users WHERE id = ?', [userId])
+    const user = await get<UserRow>('SELECT * FROM users WHERE id = ?', [userId])
     if (!user) throw new DomainError('La cuenta ya no existe.', 'not_found')
     if (user.role === 'admin' && role !== 'admin') {
-      const admins = get<{ n: number }>(`SELECT COUNT(*) AS n FROM users WHERE role = 'admin' AND status = 'active'`)?.n ?? 0
+      const admins = (await get<{ n: number }>(`SELECT COUNT(*) AS n FROM users WHERE role = 'admin' AND status = 'active'`))?.n ?? 0
       if (admins <= 1) throw new DomainError('Debe quedar al menos un administrador activo.', 'last_admin')
     }
-    run('UPDATE users SET role = ?, updated_at = ? WHERE id = ?', [role, now(), userId])
-    deleteUserSessions(userId)
-    logAudit({
+    await run('UPDATE users SET role = ?, updated_at = ? WHERE id = ?', [role, now(), userId])
+    await deleteUserSessions(userId)
+    await logAudit({
       actorId: adminId,
       action: 'user.role_changed',
       entityType: 'user',
@@ -275,24 +274,24 @@ export function setUserRole(adminId: number, userId: number, role: Role) {
  * Suspender o reactivar. El personal bibliotecario solo puede actuar sobre lectores;
  * la administración, sobre cualquiera salvo sí misma.
  */
-export function setUserStatus(actor: { id: number; role: Role }, userId: number, status: UserStatus) {
-  transaction(() => {
+export async function setUserStatus(actor: { id: number; role: Role }, userId: number, status: UserStatus) {
+  await transaction(async () => {
     if (actor.id === userId) throw new DomainError('No puedes suspender tu propia cuenta.', 'self')
-    const user = get<UserRow>('SELECT * FROM users WHERE id = ?', [userId])
+    const user = await get<UserRow>('SELECT * FROM users WHERE id = ?', [userId])
     if (!user) throw new DomainError('La cuenta ya no existe.', 'not_found')
     if (actor.role !== 'admin' && user.role !== 'reader') {
       throw new DomainError('Solo la administración puede suspender cuentas del equipo.', 'forbidden')
     }
     if (user.role === 'admin' && status === 'suspended') {
-      const admins = get<{ n: number }>(`SELECT COUNT(*) AS n FROM users WHERE role = 'admin' AND status = 'active'`)?.n ?? 0
+      const admins = (await get<{ n: number }>(`SELECT COUNT(*) AS n FROM users WHERE role = 'admin' AND status = 'active'`))?.n ?? 0
       if (admins <= 1) throw new DomainError('Debe quedar al menos un administrador activo.', 'last_admin')
     }
-    run('UPDATE users SET status = ?, updated_at = ? WHERE id = ?', [status, now(), userId])
+    await run('UPDATE users SET status = ?, updated_at = ? WHERE id = ?', [status, now(), userId])
     if (status === 'suspended') {
-      deleteUserSessions(userId)
-      run(`UPDATE reservations SET status = 'cancelled', updated_at = ? WHERE user_id = ? AND status = 'waiting'`, [now(), userId])
+      await deleteUserSessions(userId)
+      await run(`UPDATE reservations SET status = 'cancelled', updated_at = ? WHERE user_id = ? AND status = 'waiting'`, [now(), userId])
     }
-    logAudit({
+    await logAudit({
       actorId: actor.id,
       action: status === 'suspended' ? 'user.suspended' : 'user.reactivated',
       entityType: 'user',

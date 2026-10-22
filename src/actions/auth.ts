@@ -138,7 +138,7 @@ export async function forgotPasswordAction(_: ActionState | null, formData: Form
   }
   const limit = rateLimit(`forgot:${await clientKey()}:${parsed.data.email.toLowerCase()}`, 4, 60 * 60_000)
   if (!limit.ok) return { ok: false, message: waitMessage(limit.retryAfterSeconds) }
-  requestPasswordReset(parsed.data.email)
+  await requestPasswordReset(parsed.data.email)
   return {
     ok: true,
     message:

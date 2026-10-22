@@ -12,7 +12,7 @@ export interface AuditEntry {
   createdAt: string
 }
 
-export function logAudit(input: {
+export async function logAudit(input: {
   actorId: number | null
   action: string
   entityType: string
@@ -20,7 +20,7 @@ export function logAudit(input: {
   summary: string
   details?: Record<string, unknown>
 }) {
-  run(
+  await run(
     `INSERT INTO audit_log (actor_id, action, entity_type, entity_id, summary, details)
      VALUES (:actorId, :action, :entityType, :entityId, :summary, :details)`,
     {
@@ -48,7 +48,7 @@ export const AUDIT_ENTITY_LABEL: Record<string, string> = {
   user: 'Usuarios',
 }
 
-export function listAudit(options: { page: number; pageSize: number; entityType?: string; entityId?: number }) {
+export async function listAudit(options: { page: number; pageSize: number; entityType?: string; entityId?: number }) {
   const where: string[] = []
   const params: Record<string, string | number> = {}
   if (options.entityType) {
@@ -61,8 +61,8 @@ export function listAudit(options: { page: number; pageSize: number; entityType?
   }
   const clause = where.length ? `WHERE ${where.join(' AND ')}` : ''
   const total =
-    get<{ n: number }>(`SELECT COUNT(*) AS n FROM audit_log a ${clause}`, params)?.n ?? 0
-  const rows = all<{
+    (await get<{ n: number }>(`SELECT COUNT(*) AS n FROM audit_log a ${clause}`, params))?.n ?? 0
+  const rows = await all<{
     id: number
     actor_id: number | null
     actor_name: string | null

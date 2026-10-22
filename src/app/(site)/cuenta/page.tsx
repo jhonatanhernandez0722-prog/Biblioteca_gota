@@ -48,13 +48,16 @@ function LoanBook({ loan }: { loan: LoanRecord }) {
 
 export default async function AccountPage() {
   const user = await requireUser('/cuenta')
-  expireStalePickups()
-  const loans = listUserLoans(user.id)
-  const reservations = listUserReservations(user.id).filter((r) => r.status === 'waiting')
-  const eligibility = getReaderEligibility(user.id)
-  const pendingDocs = pendingConsents(user.id)
+  await expireStalePickups()
+  const loans = await listUserLoans(user.id)
+  const reservations = (await listUserReservations(user.id)).filter((r) => r.status === 'waiting')
+  const eligibility = await getReaderEligibility(user.id)
+  const pendingDocs = await pendingConsents(user.id)
 
   const onLoan = loans.filter((l) => l.status === 'checked_out')
+  const waitingCounts = new Map(
+    await Promise.all(onLoan.map(async (loan) => [loan.id, await countWaitingReservations(loan.bookId)] as const)),
+  )
   const ready = loans.filter((l) => l.status === 'approved')
   const pending = loans.filter((l) => l.status === 'pending')
   const history = loans.filter((l) => ['returned', 'rejected', 'cancelled', 'expired'].includes(l.status))
@@ -127,7 +130,7 @@ export default async function AccountPage() {
             {onLoan.map((loan) => {
               const display = loanDisplayStatus(loan.status, loan.dueAt)
               const overdue = display === 'overdue'
-              const waiting = countWaitingReservations(loan.bookId)
+              const waiting = waitingCounts.get(loan.id) ?? 0
               const canRenew = !overdue && loan.renewals < LOAN_RULES.maxRenewals && waiting === 0
               return (
                 <li key={loan.id} className={`${styles.slip} ${overdue ? styles.slipOverdue : ''}`}>

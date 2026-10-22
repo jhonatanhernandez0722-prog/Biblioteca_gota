@@ -13,7 +13,7 @@ import { isDomainError } from '@/server/errors'
 /** Acepta las versiones vigentes que el usuario tiene pendientes. Cada casilla se valida por separado. */
 export async function acceptPendingConsentsAction(_: ActionState | null, formData: FormData): Promise<ActionState> {
   const user = await requireUser('/cuenta')
-  const pending = pendingConsents(user.id)
+  const pending = await pendingConsents(user.id)
   if (!pending.length) return { ok: true, message: 'Ya tienes aceptadas las versiones vigentes.' }
   const fieldErrors: Record<string, string> = {}
   for (const c of ACCOUNT_CONSENTS) {
@@ -28,10 +28,10 @@ export async function acceptPendingConsentsAction(_: ActionState | null, formDat
     return { ok: false, message: 'Marca las casillas que faltan para seguir pidiendo libros.', fieldErrors }
   }
   const requestId = randomUUID()
-  transaction(() => {
+  await transaction(async () => {
     for (const c of ACCOUNT_CONSENTS) {
       if (pending.includes(c.slug)) {
-        recordConsent({ userId: user.id, slug: c.slug, type: c.type, result: 'accepted', source: 'formulario:reaceptacion', requestId })
+        await recordConsent({ userId: user.id, slug: c.slug, type: c.type, result: 'accepted', source: 'formulario:reaceptacion', requestId })
       }
     }
   })
@@ -44,7 +44,7 @@ export async function revokePrivacyAction(_: ActionState | null, formData: FormD
   const parsed = z.object({ confirm: z.literal('on') }).safeParse(Object.fromEntries(formData))
   if (!parsed.success) return { ok: false, message: 'Confirma que entiendes las consecuencias de revocar.' }
   try {
-    revokeConsent(user.id, 'privacidad', 'perfil:revocacion', randomUUID())
+    await revokeConsent(user.id, 'privacidad', 'perfil:revocacion', randomUUID())
   } catch (error) {
     if (isDomainError(error)) return { ok: false, message: error.message }
     throw error

@@ -13,12 +13,12 @@ export const metadata = { title: 'Resumen' }
 
 export default async function AdminDashboard() {
   const user = await requireStaff()
-  expireStalePickups()
-  const stats = getDashboardStats()
-  const requests = listStaffLoans({ view: 'requests', page: 1, pageSize: 5 })
-  const overdue = listStaffLoans({ view: 'overdue', page: 1, pageSize: 5 })
-  const pickups = listStaffLoans({ view: 'pickup', page: 1, pageSize: 5 })
-  const activity = listAudit({ page: 1, pageSize: 8 })
+  await expireStalePickups()
+  const stats = await getDashboardStats()
+  const requests = await listStaffLoans({ view: 'requests', page: 1, pageSize: 5 })
+  const overdue = await listStaffLoans({ view: 'overdue', page: 1, pageSize: 5 })
+  const pickups = await listStaffLoans({ view: 'pickup', page: 1, pageSize: 5 })
+  const activity = await listAudit({ page: 1, pageSize: 8 })
 
   const tiles = [
     { label: 'Libros en el catálogo', value: stats.books, href: '/admin/libros' },

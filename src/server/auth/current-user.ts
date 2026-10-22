@@ -10,11 +10,11 @@ import { createSessionRecord, deleteSession, findSessionUser, SESSION_COOKIE } f
 export const getCurrentUser = cache(async (): Promise<SessionUser | null> => {
   const token = (await cookies()).get(SESSION_COOKIE)?.value
   if (!token) return null
-  return findSessionUser(token)
+  return await findSessionUser(token)
 })
 
 export async function startSession(userId: number) {
-  const { token, expiresAt } = createSessionRecord(userId)
+  const { token, expiresAt } = await createSessionRecord(userId)
   ;(await cookies()).set(SESSION_COOKIE, token, {
     httpOnly: true,
     sameSite: 'lax',
@@ -27,7 +27,7 @@ export async function startSession(userId: number) {
 export async function endSession() {
   const store = await cookies()
   const token = store.get(SESSION_COOKIE)?.value
-  if (token) deleteSession(token)
+  if (token) await deleteSession(token)
   store.delete(SESSION_COOKIE)
 }
 

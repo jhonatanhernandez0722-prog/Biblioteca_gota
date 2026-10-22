@@ -9,8 +9,8 @@ export const metadata: Metadata = {
   description: 'Explora el catálogo de Biblioteca Gota Gota por categorías: novela, poesía, ensayo, teatro y más.',
 }
 
-export default function CategoriesPage() {
-  const categories = getCategoryIndex()
+export default async function CategoriesPage() {
+  const categories = await getCategoryIndex()
   return (
     <div className="container">
       <header className={styles.head}>
@@ -30,8 +30,8 @@ export default function CategoriesPage() {
         </div>
       ) : (
         <ul role="list" className={styles.list}>
-          {categories.map((category) => {
-            const books = searchBooks({ category: category.slug, sort: 'recent', pageSize: 5 }).items
+          {(await Promise.all(categories.map(async (category) => {
+            const books = (await searchBooks({ category: category.slug, sort: 'recent', pageSize: 5 })).items
             return (
               <li key={category.id} className={styles.item}>
                 <div className={styles.text}>
@@ -61,7 +61,7 @@ export default function CategoriesPage() {
                 </ul>
               </li>
             )
-          })}
+          })))}
         </ul>
       )}
     </div>

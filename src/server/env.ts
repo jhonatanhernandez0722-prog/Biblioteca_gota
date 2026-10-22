@@ -7,7 +7,10 @@ import { z } from 'zod'
  */
 const schema = z.object({
   APP_URL: z.string().url().default('http://localhost:3000'),
-  DATABASE_PATH: z.string().default('./data/gotagota.db'),
+  /** postgresql://… (Neon). Vacío: PostgreSQL en memoria (PGlite), solo para pruebas. */
+  DATABASE_URL: z.string().optional(),
+  STORAGE_TYPE: z.enum(['local', 'vercel_blob']).default('local'),
+  BLOB_READ_WRITE_TOKEN: z.string().optional(),
   STORAGE_DIR: z.string().default('./storage'),
   DEMO_MODE: z
     .enum(['true', 'false'])

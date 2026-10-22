@@ -20,13 +20,13 @@ export default async function EditBookPage({ params }: { params: Promise<{ id: s
   const { id: rawId } = await params
   await requireStaff(`/admin/libros/${rawId}`)
   const id = Number.parseInt(rawId, 10)
-  const book = Number.isInteger(id) && id > 0 ? getBookById(id) : null
+  const book = Number.isInteger(id) && id > 0 ? await getBookById(id) : null
   if (!book) notFound()
 
-  const copies = listCopies(book.id)
-  const circulation = getBookCirculation(book.id)
-  const history = listAudit({ page: 1, pageSize: 6, entityType: 'book', entityId: book.id })
-  const categories = listCategories().map((c) => ({ slug: c.slug, name: c.name }))
+  const copies = await listCopies(book.id)
+  const circulation = await getBookCirculation(book.id)
+  const history = await listAudit({ page: 1, pageSize: 6, entityType: 'book', entityId: book.id })
+  const categories = (await listCategories()).map((c) => ({ slug: c.slug, name: c.name }))
 
   return (
     <>

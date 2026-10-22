@@ -17,11 +17,11 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
   const { id: rawId } = await params
   const staff = await requireStaff(`/admin/usuarios/${rawId}`)
   const id = Number.parseInt(rawId, 10)
-  const user = Number.isInteger(id) && id > 0 ? getUserById(id) : null
+  const user = Number.isInteger(id) && id > 0 ? await getUserById(id) : null
   if (!user) notFound()
 
-  const loans = listUserLoans(user.id)
-  const reservations = listUserReservations(user.id).filter((r) => r.status === 'waiting')
+  const loans = await listUserLoans(user.id)
+  const reservations = (await listUserReservations(user.id)).filter((r) => r.status === 'waiting')
   const isAdmin = staff.role === 'admin'
   const canChangeStatus = staff.id !== user.id && (isAdmin || user.role === 'reader')
 

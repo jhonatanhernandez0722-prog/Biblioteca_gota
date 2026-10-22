@@ -23,8 +23,8 @@ export default async function ConsentsPage({ searchParams }: { searchParams: Pro
   const sp = await searchParams
   const userId = Number.parseInt(sp.usuario ?? '', 10) || undefined
   const page = Math.max(1, Number.parseInt(sp.pagina ?? '1', 10) || 1)
-  const { records, total } = listConsentRecords({ userId, page, pageSize: PAGE_SIZE })
-  const chain = verifyConsentChain()
+  const { records, total } = await listConsentRecords({ userId, page, pageSize: PAGE_SIZE })
+  const chain = await verifyConsentChain()
 
   return (
     <>

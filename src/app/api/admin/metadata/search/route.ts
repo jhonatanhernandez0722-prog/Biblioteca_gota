@@ -28,10 +28,10 @@ export async function GET(request: Request) {
   }
   try {
     const page = await provider.search({ q: parsed.data.q, mode: parsed.data.mode, page: parsed.data.page })
-    const items = page.items.map((item) => {
-      const match = item.isbn13 ? findPossibleDuplicates({ isbn: item.isbn13 }).exact[0] : undefined
+    const items = await Promise.all(page.items.map(async (item) => {
+      const match = item.isbn13 ? (await findPossibleDuplicates({ isbn: item.isbn13 })).exact[0] : undefined
       return { ...item, inCatalog: match ? { id: match.id, slug: match.slug, title: match.title } : null }
-    })
+    }))
     return json({ ...page, items, provider: provider.info })
   } catch (error) {
     return providerErrorResponse(error)

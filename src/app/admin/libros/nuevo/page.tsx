@@ -9,7 +9,7 @@ export const metadata = { title: 'Nueva ficha' }
 
 export default async function NewBookPage() {
   await requireStaff('/admin/libros/nuevo')
-  const categories = listCategories().map((c) => ({ slug: c.slug, name: c.name }))
+  const categories = (await listCategories()).map((c) => ({ slug: c.slug, name: c.name }))
   return (
     <>
       <AdminHeader

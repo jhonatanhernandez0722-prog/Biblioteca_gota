@@ -25,7 +25,7 @@ export default async function UsersPage({
   const role = (['reader', 'librarian', 'admin'] as Role[]).find((r) => r === sp.rol)
   const status = (['active', 'suspended'] as UserStatus[]).find((s) => s === sp.estado)
   const page = Math.max(1, Number.parseInt(sp.pagina ?? '1', 10) || 1)
-  const { users, total } = listUsers({ q, role, status, page, pageSize: PAGE_SIZE })
+  const { users, total } = await listUsers({ q, role, status, page, pageSize: PAGE_SIZE })
   // Protección de datos: el correo completo solo lo ve la administración.
   const showEmail = staff.role === 'admin'
 

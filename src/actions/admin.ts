@@ -122,7 +122,7 @@ async function resolveCover(
     if (file.size > MAX_COVER_BYTES) {
       throw Object.assign(new Error('large'), { field: 'coverFile', message: 'La imagen pesa más de 5 MB.' })
     }
-    return storeCover(Buffer.from(await file.arrayBuffer()))
+    return await storeCover(Buffer.from(await file.arrayBuffer()))
   }
   if (mode === 'provider') {
     if (!coverUrl || !isAllowedCoverUrl(coverUrl)) {
@@ -131,7 +131,7 @@ async function resolveCover(
         message: 'El proveedor no ofrece portada para este libro. Sube una imagen o guárdalo sin portada.',
       })
     }
-    return storeCover(await fetchRemoteCover(coverUrl), { rejectFlat: true })
+    return await storeCover(await fetchRemoteCover(coverUrl), { rejectFlat: true })
   }
   return null
 }
@@ -154,7 +154,7 @@ export async function saveBookAction(_: ActionState | null, formData: FormData):
     .slice(0, 8)
 
   // Duplicados: el ISBN bloquea; un título y autor muy parecidos piden confirmación.
-  const duplicates = findPossibleDuplicates({
+  const duplicates = await findPossibleDuplicates({
     isbn: data.isbn,
     title: data.title,
     authors: data.authors,
@@ -213,18 +213,18 @@ export async function saveBookAction(_: ActionState | null, formData: FormData):
   let saved: { id: number; slug: string }
   try {
     if (data.bookId) {
-      saved = updateBook(data.bookId, input, staff.id)
+      saved = await updateBook(data.bookId, input, staff.id)
     } else {
-      saved = createBook(input, staff.id)
+      saved = await createBook(input, staff.id)
       if (data.copies && data.copies > 0) {
-        addCopies(staff.id, saved.id, data.copies, { location: data.location })
+        await addCopies(staff.id, saved.id, data.copies, { location: data.location })
       }
     }
     if (cover) {
-      const { previousKey } = setBookCover(saved.id, cover.key, cover.color, staff.id)
+      const { previousKey } = await setBookCover(saved.id, cover.key, cover.color, staff.id)
       if (previousKey && previousKey !== cover.key) await removeCover(previousKey)
     } else if (data.coverMode === 'none' && data.bookId) {
-      const { previousKey } = setBookCover(saved.id, null, null, staff.id)
+      const { previousKey } = await setBookCover(saved.id, null, null, staff.id)
       await removeCover(previousKey)
     }
   } catch (error) {
@@ -244,10 +244,10 @@ export async function setBookStatusAction(_: ActionState | null, formData: FormD
   const staff = await requireStaff()
   const parsed = z.object({ bookId: id, status: z.enum(['active', 'archived']) }).safeParse(Object.fromEntries(formData))
   if (!parsed.success) return { ok: false, message: 'Datos no válidos.' }
-  const book = getBookById(parsed.data.bookId)
+  const book = await getBookById(parsed.data.bookId)
   return attempt(
-    () => {
-      setBookStatus(parsed.data.bookId, parsed.data.status, staff.id)
+    async () => {
+      await setBookStatus(parsed.data.bookId, parsed.data.status, staff.id)
       return parsed.data.status === 'archived'
         ? 'Libro archivado: ya no aparece en el catálogo público.'
         : 'Libro recuperado: vuelve a aparecer en el catálogo.'
@@ -260,9 +260,9 @@ export async function deleteBookAction(_: ActionState | null, formData: FormData
   const staff = await requireStaff()
   const parsed = z.object({ bookId: id }).safeParse(Object.fromEntries(formData))
   if (!parsed.success) return { ok: false, message: 'Datos no válidos.' }
-  const book = getBookById(parsed.data.bookId)
+  const book = await getBookById(parsed.data.bookId)
   try {
-    const { coverKey } = deleteBook(parsed.data.bookId, staff.id)
+    const { coverKey } = await deleteBook(parsed.data.bookId, staff.id)
     await removeCover(coverKey)
   } catch (error) {
     if (isDomainError(error)) return { ok: false, message: error.message }
@@ -290,10 +290,10 @@ export async function addCopiesAction(_: ActionState | null, formData: FormData)
     .safeParse(Object.fromEntries(formData))
   if (!parsed.success) return { ok: false, message: 'Revisa los datos.', fieldErrors: fieldErrors(parsed.error) }
   const { bookId, count, location, condition } = parsed.data
-  const book = getBookById(bookId)
+  const book = await getBookById(bookId)
   return attempt(
-    () => {
-      addCopies(staff.id, bookId, count, { location, condition })
+    async () => {
+      await addCopies(staff.id, bookId, count, { location, condition })
       return count === 1 ? 'Ejemplar registrado.' : `${count} ejemplares registrados.`
     },
     [`/admin/libros/${bookId}`, book ? `/libros/${book.slug}` : '/', '/admin/libros', '/'],
@@ -313,8 +313,8 @@ export async function updateCopyAction(_: ActionState | null, formData: FormData
     .safeParse(Object.fromEntries(formData))
   if (!parsed.success) return { ok: false, message: 'Revisa los datos.', fieldErrors: fieldErrors(parsed.error) }
   return attempt(
-    () => {
-      updateCopyDetails(parsed.data.copyId, parsed.data, staff.id)
+    async () => {
+      await updateCopyDetails(parsed.data.copyId, parsed.data, staff.id)
       return 'Ejemplar actualizado.'
     },
     [`/admin/libros/${parsed.data.bookId}`],
@@ -331,7 +331,7 @@ export async function setCopyStatusAction(_: ActionState | null, formData: FormD
     })
     .safeParse(Object.fromEntries(formData))
   if (!parsed.success) return { ok: false, message: 'Datos no válidos.' }
-  const book = getBookById(parsed.data.bookId)
+  const book = await getBookById(parsed.data.bookId)
   const labels: Record<string, string> = {
     available: 'vuelve a la estantería',
     maintenance: 'pasa a reparación',
@@ -339,8 +339,8 @@ export async function setCopyStatusAction(_: ActionState | null, formData: FormD
     withdrawn: 'queda retirado de la colección',
   }
   return attempt(
-    () => {
-      setCopyStatus(staff.id, parsed.data.copyId, parsed.data.status)
+    async () => {
+      await setCopyStatus(staff.id, parsed.data.copyId, parsed.data.status)
       return `El ejemplar ${labels[parsed.data.status]}.`
     },
     [`/admin/libros/${parsed.data.bookId}`, book ? `/libros/${book.slug}` : '/', '/'],
@@ -356,8 +356,8 @@ export async function approveLoanAction(_: ActionState | null, formData: FormDat
   const staff = await requireStaff()
   const parsed = loanForm.safeParse(Object.fromEntries(formData))
   if (!parsed.success) return { ok: false, message: 'Solicitud no válida.' }
-  return attempt(() => {
-    approveLoan(staff.id, parsed.data.loanId)
+  return attempt(async () => {
+    await approveLoan(staff.id, parsed.data.loanId)
     return 'Solicitud aprobada: el ejemplar queda apartado y avisamos al lector.'
   }, LOAN_PATHS)
 }
@@ -366,8 +366,8 @@ export async function rejectLoanAction(_: ActionState | null, formData: FormData
   const staff = await requireStaff()
   const parsed = loanForm.extend({ reason: z.string().max(300) }).safeParse(Object.fromEntries(formData))
   if (!parsed.success) return { ok: false, message: 'Solicitud no válida.' }
-  return attempt(() => {
-    rejectLoan(staff.id, parsed.data.loanId, parsed.data.reason)
+  return attempt(async () => {
+    await rejectLoan(staff.id, parsed.data.loanId, parsed.data.reason)
     return 'Solicitud rechazada. El lector verá el motivo.'
   }, LOAN_PATHS)
 }
@@ -376,8 +376,8 @@ export async function checkoutLoanAction(_: ActionState | null, formData: FormDa
   const staff = await requireStaff()
   const parsed = loanForm.safeParse(Object.fromEntries(formData))
   if (!parsed.success) return { ok: false, message: 'Solicitud no válida.' }
-  return attempt(() => {
-    const { dueAt } = checkoutLoan(staff.id, parsed.data.loanId)
+  return attempt(async () => {
+    const { dueAt } = await checkoutLoan(staff.id, parsed.data.loanId)
     return `Entregado. Fecha de devolución: ${formatDate(dueAt)}.`
   }, LOAN_PATHS)
 }
@@ -388,8 +388,8 @@ export async function returnLoanAction(_: ActionState | null, formData: FormData
     .extend({ toMaintenance: z.literal('on').optional() })
     .safeParse(Object.fromEntries(formData))
   if (!parsed.success) return { ok: false, message: 'Préstamo no válido.' }
-  return attempt(() => {
-    returnLoan(staff.id, parsed.data.loanId, { toMaintenance: Boolean(parsed.data.toMaintenance) })
+  return attempt(async () => {
+    await returnLoan(staff.id, parsed.data.loanId, { toMaintenance: Boolean(parsed.data.toMaintenance) })
     return parsed.data.toMaintenance
       ? 'Devolución registrada. El ejemplar pasa a reparación.'
       : 'Devolución registrada. Si había lista de espera, el ejemplar ya está apartado para la siguiente persona.'
@@ -400,8 +400,8 @@ export async function staffRenewLoanAction(_: ActionState | null, formData: Form
   const staff = await requireStaff()
   const parsed = loanForm.safeParse(Object.fromEntries(formData))
   if (!parsed.success) return { ok: false, message: 'Préstamo no válido.' }
-  return attempt(() => {
-    const { dueAt } = renewLoan({ id: staff.id, isStaff: true }, parsed.data.loanId)
+  return attempt(async () => {
+    const { dueAt } = await renewLoan({ id: staff.id, isStaff: true }, parsed.data.loanId)
     return `Renovado hasta el ${formatDate(dueAt)}.`
   }, LOAN_PATHS)
 }
@@ -410,8 +410,8 @@ export async function staffCancelLoanAction(_: ActionState | null, formData: For
   const staff = await requireStaff()
   const parsed = loanForm.safeParse(Object.fromEntries(formData))
   if (!parsed.success) return { ok: false, message: 'Solicitud no válida.' }
-  return attempt(() => {
-    cancelLoan({ id: staff.id, isStaff: true }, parsed.data.loanId)
+  return attempt(async () => {
+    await cancelLoan({ id: staff.id, isStaff: true }, parsed.data.loanId)
     return 'Apartado anulado. El ejemplar pasa a la siguiente persona o a la estantería.'
   }, LOAN_PATHS)
 }
@@ -420,8 +420,8 @@ export async function staffCancelReservationAction(_: ActionState | null, formDa
   const staff = await requireStaff()
   const parsed = z.object({ reservationId: id }).safeParse(Object.fromEntries(formData))
   if (!parsed.success) return { ok: false, message: 'Reserva no válida.' }
-  return attempt(() => {
-    cancelReservation({ id: staff.id, isStaff: true }, parsed.data.reservationId)
+  return attempt(async () => {
+    await cancelReservation({ id: staff.id, isStaff: true }, parsed.data.reservationId)
     return 'Reserva cancelada.'
   }, LOAN_PATHS)
 }
@@ -434,8 +434,8 @@ export async function setUserRoleAction(_: ActionState | null, formData: FormDat
     .object({ userId: id, role: z.enum(['reader', 'librarian', 'admin'] satisfies Role[]) })
     .safeParse(Object.fromEntries(formData))
   if (!parsed.success) return { ok: false, message: 'Datos no válidos.' }
-  return attempt(() => {
-    setUserRole(admin.id, parsed.data.userId, parsed.data.role)
+  return attempt(async () => {
+    await setUserRole(admin.id, parsed.data.userId, parsed.data.role)
     return 'Rol actualizado. La persona tendrá que volver a entrar.'
   }, ['/admin/usuarios', `/admin/usuarios/${parsed.data.userId}`])
 }
@@ -446,8 +446,8 @@ export async function setUserStatusAction(_: ActionState | null, formData: FormD
     .object({ userId: id, status: z.enum(['active', 'suspended'] satisfies UserStatus[]) })
     .safeParse(Object.fromEntries(formData))
   if (!parsed.success) return { ok: false, message: 'Datos no válidos.' }
-  return attempt(() => {
-    setUserStatus(staff, parsed.data.userId, parsed.data.status)
+  return attempt(async () => {
+    await setUserStatus(staff, parsed.data.userId, parsed.data.status)
     return parsed.data.status === 'suspended'
       ? 'Cuenta suspendida: no podrá pedir ni reservar libros.'
       : 'Cuenta reactivada.'

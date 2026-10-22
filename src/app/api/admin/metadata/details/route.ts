@@ -22,7 +22,7 @@ export async function GET(request: Request) {
   try {
     const details = await provider.getDetails(parsed.data.id)
     if (!details) return apiError(404, 'not_found', 'El proveedor ya no tiene esa ficha.')
-    const duplicates = findPossibleDuplicates({ isbn: details.isbn13, title: details.title, authors: details.authors })
+    const duplicates = await findPossibleDuplicates({ isbn: details.isbn13, title: details.title, authors: details.authors })
     return json({ details, duplicates, provider: provider.info })
   } catch (error) {
     return providerErrorResponse(error)

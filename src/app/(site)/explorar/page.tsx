@@ -40,12 +40,12 @@ export default async function ExplorePage({ searchParams }: { searchParams: Sear
   const page = Math.max(1, Number.parseInt(first(sp.pagina) ?? '1', 10) || 1)
 
   const user = await getCurrentUser()
-  const categories = listCategories().filter((c) => c.bookCount > 0)
-  const languages = listLanguages()
-  const allowPopular = countCirculatedLoans() >= 5
+  const categories = (await listCategories()).filter((c) => c.bookCount > 0)
+  const languages = await listLanguages()
+  const allowPopular = await countCirculatedLoans() >= 5
   const sort = SORT_PARAM[ordenParam] ?? (q ? 'relevance' : 'title')
 
-  const result = searchBooks({
+  const result = await searchBooks({
     q,
     category: categoria,
     availability: disponible ? 'available' : undefined,
@@ -53,7 +53,7 @@ export default async function ExplorePage({ searchParams }: { searchParams: Sear
     sort: sort === 'popular' && !allowPopular ? 'title' : sort,
     page,
   })
-  const catalogTotal = searchBooks({ pageSize: 1 }).total
+  const catalogTotal = (await searchBooks({ pageSize: 1 })).total
 
   const params = {
     q: q || undefined,

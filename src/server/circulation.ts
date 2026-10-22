@@ -1,11 +1,10 @@
-import type { SQLInputValue } from 'node:sqlite'
 import { addDays, endOfLibraryDay, formatDate } from '@/lib/dates'
 import { LOAN_RULES } from '@/lib/rules'
 import type { CopyCondition, CopyStatus, LoanRecord, LoanStatus, ReservationRecord } from '@/lib/types'
 import { logAudit } from './audit'
 import { getCopy, insertCopies } from './catalog'
 import { pendingConsents } from './consents'
-import { all, get, now, run, transaction } from './db'
+import { all, get, now, run, transaction, type SqlValue } from './db'
 import { env } from './env'
 import { DomainError } from './errors'
 import { sendInBackground, type MailMessage } from './integrations/mail'
@@ -29,7 +28,7 @@ const LOAN_SELECT = `
   SELECT l.*, u.name AS user_name, u.email AS user_email, u.card_number AS user_card,
          b.slug AS book_slug, b.title AS book_title, b.cover_key, b.cover_color,
          c.code AS copy_code,
-         (SELECT group_concat(a.name, '|' ORDER BY a.position) FROM book_authors a WHERE a.book_id = b.id) AS authors
+         (SELECT string_agg(a.name, '|' ORDER BY a.position) FROM book_authors a WHERE a.book_id = b.id) AS authors
     FROM loans l
     JOIN users u ON u.id = l.user_id
     JOIN books b ON b.id = l.book_id
@@ -87,13 +86,13 @@ function toLoan(r: LoanRow): LoanRecord {
   }
 }
 
-export function getLoan(loanId: number): LoanRecord | null {
-  const row = get<LoanRow>(`${LOAN_SELECT} WHERE l.id = ?`, [loanId])
+export async function getLoan(loanId: number): Promise<LoanRecord | null> {
+  const row = await get<LoanRow>(`${LOAN_SELECT} WHERE l.id = ?`, [loanId])
   return row ? toLoan(row) : null
 }
 
-export function listUserLoans(userId: number): LoanRecord[] {
-  return all<LoanRow>(`${LOAN_SELECT} WHERE l.user_id = ? ORDER BY l.requested_at DESC, l.id DESC`, [userId]).map(
+export async function listUserLoans(userId: number): Promise<LoanRecord[]> {
+  return (await all<LoanRow>(`${LOAN_SELECT} WHERE l.user_id = ? ORDER BY l.requested_at DESC, l.id DESC`, [userId])).map(
     toLoan,
   )
 }
@@ -101,7 +100,7 @@ export function listUserLoans(userId: number): LoanRecord[] {
 const RESERVATION_SELECT = `
   SELECT r.*, u.name AS user_name, u.email AS user_email,
          b.slug AS book_slug, b.title AS book_title, b.cover_key, b.cover_color,
-         (SELECT group_concat(a.name, '|' ORDER BY a.position) FROM book_authors a WHERE a.book_id = b.id) AS authors,
+         (SELECT string_agg(a.name, '|' ORDER BY a.position) FROM book_authors a WHERE a.book_id = b.id) AS authors,
          CASE WHEN r.status = 'waiting' THEN (
            SELECT COUNT(*) FROM reservations r2
             WHERE r2.book_id = r.book_id AND r2.status = 'waiting'
@@ -145,19 +144,19 @@ function toReservation(r: ReservationRow): ReservationRecord {
   }
 }
 
-export function listUserReservations(userId: number): ReservationRecord[] {
-  return all<ReservationRow>(`${RESERVATION_SELECT} WHERE r.user_id = ? ORDER BY r.created_at DESC`, [userId]).map(
+export async function listUserReservations(userId: number): Promise<ReservationRecord[]> {
+  return (await all<ReservationRow>(`${RESERVATION_SELECT} WHERE r.user_id = ? ORDER BY r.created_at DESC`, [userId])).map(
     toReservation,
   )
 }
 
 /** Estado de un libro para un lector concreto: ¿lo tiene pedido, prestado o reservado? */
-export function getUserBookState(userId: number, bookId: number) {
-  const loanRow = get<LoanRow>(
+export async function getUserBookState(userId: number, bookId: number) {
+  const loanRow = await get<LoanRow>(
     `${LOAN_SELECT} WHERE l.user_id = ? AND l.book_id = ? AND l.status IN ('pending','approved','checked_out')`,
     [userId, bookId],
   )
-  const reservationRow = get<ReservationRow>(
+  const reservationRow = await get<ReservationRow>(
     `${RESERVATION_SELECT} WHERE r.user_id = ? AND r.book_id = ? AND r.status = 'waiting'`,
     [userId, bookId],
   )
@@ -168,38 +167,38 @@ export function getUserBookState(userId: number, bookId: number) {
 }
 
 /** Situación de los ejemplares de un libro (para el personal). */
-export function getBookCirculation(bookId: number) {
+export async function getBookCirculation(bookId: number) {
   const counts = Object.fromEntries(
-    all<{ status: CopyStatus; n: number }>(
+    (await all<{ status: CopyStatus; n: number }>(
       'SELECT status, COUNT(*) AS n FROM copies WHERE book_id = ? GROUP BY status',
       [bookId],
-    ).map((r) => [r.status, r.n]),
+    )).map((r) => [r.status, r.n]),
   ) as Partial<Record<CopyStatus, number>>
   const pending =
-    get<{ n: number }>(`SELECT COUNT(*) AS n FROM loans WHERE book_id = ? AND status = 'pending'`, [bookId])?.n ?? 0
+    (await get<{ n: number }>(`SELECT COUNT(*) AS n FROM loans WHERE book_id = ? AND status = 'pending'`, [bookId]))?.n ?? 0
   const waiting =
-    get<{ n: number }>(`SELECT COUNT(*) AS n FROM reservations WHERE book_id = ? AND status = 'waiting'`, [bookId])
+    (await get<{ n: number }>(`SELECT COUNT(*) AS n FROM reservations WHERE book_id = ? AND status = 'waiting'`, [bookId]))
       ?.n ?? 0
   return { copies: counts, pending, waiting }
 }
 
 /** Lector: ¿puede pedir libros ahora mismo? Devuelve el motivo si no. */
-export function getReaderEligibility(userId: number): { canRequest: boolean; reason?: string } {
-  const user = get<{ status: string }>('SELECT status FROM users WHERE id = ?', [userId])
+export async function getReaderEligibility(userId: number): Promise<{ canRequest: boolean; reason?: string }> {
+  const user = await get<{ status: string }>('SELECT status FROM users WHERE id = ?', [userId])
   if (!user || user.status !== 'active') {
     return { canRequest: false, reason: 'Tu cuenta está suspendida. Escríbenos para revisarla.' }
   }
-  if (pendingConsents(userId).length) {
+  if ((await pendingConsents(userId)).length) {
     return {
       canRequest: false,
       reason:
         'Para pedir libros necesitas aceptar la versión vigente de los términos y autorizar el tratamiento de tus datos. Puedes hacerlo en «Mis préstamos».',
     }
   }
-  if (countOverdue(userId) > 0) {
+  if (await countOverdue(userId) > 0) {
     return { canRequest: false, reason: 'Tienes un préstamo vencido. Devuélvelo para poder pedir otro libro.' }
   }
-  if (countActiveLoans(userId) >= LOAN_RULES.maxActiveLoans) {
+  if (await countActiveLoans(userId) >= LOAN_RULES.maxActiveLoans) {
     return {
       canRequest: false,
       reason: `Ya tienes ${LOAN_RULES.maxActiveLoans} libros pedidos o prestados, el máximo a la vez.`,
@@ -210,29 +209,29 @@ export function getReaderEligibility(userId: number): { canRequest: boolean; rea
 
 /* ───────────────────────── Ayudas internas ───────────────────────── */
 
-function countOverdue(userId: number): number {
+async function countOverdue(userId: number): Promise<number> {
   return (
-    get<{ n: number }>(`SELECT COUNT(*) AS n FROM loans WHERE user_id = ? AND status = 'checked_out' AND due_at < ?`, [
+    (await get<{ n: number }>(`SELECT COUNT(*) AS n FROM loans WHERE user_id = ? AND status = 'checked_out' AND due_at < ?`, [
       userId,
       now(),
-    ])?.n ?? 0
+    ]))?.n ?? 0
   )
 }
 
-function countActiveLoans(userId: number): number {
+async function countActiveLoans(userId: number): Promise<number> {
   return (
-    get<{ n: number }>(
+    (await get<{ n: number }>(
       `SELECT COUNT(*) AS n FROM loans WHERE user_id = ? AND status IN ('pending','approved','checked_out')`,
       [userId],
-    )?.n ?? 0
+    ))?.n ?? 0
   )
 }
 
-function freeCopies(bookId: number): number {
+async function freeCopies(bookId: number): Promise<number> {
   const available =
-    get<{ n: number }>(`SELECT COUNT(*) AS n FROM copies WHERE book_id = ? AND status = 'available'`, [bookId])?.n ?? 0
+    (await get<{ n: number }>(`SELECT COUNT(*) AS n FROM copies WHERE book_id = ? AND status = 'available'`, [bookId]))?.n ?? 0
   const pending =
-    get<{ n: number }>(`SELECT COUNT(*) AS n FROM loans WHERE book_id = ? AND status = 'pending'`, [bookId])?.n ?? 0
+    (await get<{ n: number }>(`SELECT COUNT(*) AS n FROM loans WHERE book_id = ? AND status = 'pending'`, [bookId]))?.n ?? 0
   return Math.max(0, available - pending)
 }
 
@@ -244,8 +243,8 @@ function dueDateFrom(base: Date): string {
   return endOfLibraryDay(addDays(base, LOAN_RULES.loanDays)).toISOString()
 }
 
-function bookTitle(bookId: number): string {
-  return get<{ title: string }>('SELECT title FROM books WHERE id = ?', [bookId])?.title ?? 'el libro'
+async function bookTitle(bookId: number): Promise<string> {
+  return (await get<{ title: string }>('SELECT title FROM books WHERE id = ?', [bookId]))?.title ?? 'el libro'
 }
 
 function readyForPickupMail(to: string, name: string, title: string, deadline: string): MailMessage {
@@ -268,43 +267,43 @@ function readyForPickupMail(to: string, name: string, title: string, deadline: s
  * Un ejemplar vuelve a la estantería. Si hay lectores esperando ese libro, el
  * primero de la cola recibe el ejemplar apartado (préstamo aprobado para recoger).
  */
-function releaseCopy(copyId: number, actorId: number | null, effects: Effect[]) {
-  const copy = get<{ id: number; book_id: number; code: string }>('SELECT id, book_id, code FROM copies WHERE id = ?', [
+async function releaseCopy(copyId: number, actorId: number | null, effects: Effect[]) {
+  const copy = await get<{ id: number; book_id: number; code: string }>('SELECT id, book_id, code FROM copies WHERE id = ?', [
     copyId,
   ])
   if (!copy) return
-  const queue = all<{ id: number; user_id: number; created_at: string }>(
+  const queue = await all<{ id: number; user_id: number; created_at: string }>(
     `SELECT id, user_id, created_at FROM reservations
       WHERE book_id = ? AND status = 'waiting' ORDER BY created_at, id`,
     [copy.book_id],
   )
   for (const reservation of queue) {
-    const reader = get<{ id: number; name: string; email: string; status: string }>(
+    const reader = await get<{ id: number; name: string; email: string; status: string }>(
       'SELECT id, name, email, status FROM users WHERE id = ?',
       [reservation.user_id],
     )
-    const alreadyHasIt = get<{ id: number }>(
+    const alreadyHasIt = await get<{ id: number }>(
       `SELECT id FROM loans WHERE user_id = ? AND book_id = ? AND status IN ('pending','approved','checked_out')`,
       [reservation.user_id, copy.book_id],
     )
     if (!reader || reader.status !== 'active' || alreadyHasIt) {
-      run(`UPDATE reservations SET status = 'cancelled', updated_at = ? WHERE id = ?`, [now(), reservation.id])
+      await run(`UPDATE reservations SET status = 'cancelled', updated_at = ? WHERE id = ?`, [now(), reservation.id])
       continue
     }
     const deadline = pickupDeadline()
-    const { lastInsertRowid: loanId } = run(
+    const { lastInsertRowid: loanId } = await run(
       `INSERT INTO loans (user_id, book_id, copy_id, status, decided_at, decided_by, pickup_deadline)
        VALUES (?, ?, ?, 'approved', ?, ?, ?)`,
       [reader.id, copy.book_id, copy.id, now(), actorId, deadline],
     )
-    run(`UPDATE reservations SET status = 'fulfilled', loan_id = ?, updated_at = ? WHERE id = ?`, [
+    await run(`UPDATE reservations SET status = 'fulfilled', loan_id = ?, updated_at = ? WHERE id = ?`, [
       loanId,
       now(),
       reservation.id,
     ])
-    run(`UPDATE copies SET status = 'reserved', updated_at = ? WHERE id = ?`, [now(), copy.id])
-    const title = bookTitle(copy.book_id)
-    logAudit({
+    await run(`UPDATE copies SET status = 'reserved', updated_at = ? WHERE id = ?`, [now(), copy.id])
+    const title = await bookTitle(copy.book_id)
+    await logAudit({
       actorId,
       action: 'reservation.fulfilled',
       entityType: 'reservation',
@@ -315,15 +314,15 @@ function releaseCopy(copyId: number, actorId: number | null, effects: Effect[]) 
     effects.push(() => sendInBackground(readyForPickupMail(reader.email, reader.name, title, deadline)))
     return
   }
-  run(`UPDATE copies SET status = 'available', updated_at = ? WHERE id = ?`, [now(), copy.id])
+  await run(`UPDATE copies SET status = 'available', updated_at = ? WHERE id = ?`, [now(), copy.id])
 }
 
 function runEffects(effects: Effect[]) {
   for (const effect of effects) effect()
 }
 
-function loadLoanForUpdate(loanId: number) {
-  const loan = get<{
+async function loadLoanForUpdate(loanId: number) {
+  const loan = await get<{
     id: number
     user_id: number
     book_id: number
@@ -338,35 +337,35 @@ function loadLoanForUpdate(loanId: number) {
 
 /* ───────────────────────── Lector ───────────────────────── */
 
-export function requestLoan(userId: number, bookId: number): { loanId: number } {
-  return transaction(() => {
-    const eligibility = getReaderEligibility(userId)
+export async function requestLoan(userId: number, bookId: number): Promise<{ loanId: number }> {
+  return await transaction(async () => {
+    const eligibility = await getReaderEligibility(userId)
     if (!eligibility.canRequest) throw new DomainError(eligibility.reason!, 'not_eligible')
-    const book = get<{ id: number; title: string }>(`SELECT id, title FROM books WHERE id = ? AND status = 'active'`, [
+    const book = await get<{ id: number; title: string }>(`SELECT id, title FROM books WHERE id = ? AND status = 'active'`, [
       bookId,
     ])
     if (!book) throw new DomainError('Este libro ya no está en el catálogo.', 'not_found')
-    const existing = get<{ id: number }>(
+    const existing = await get<{ id: number }>(
       `SELECT id FROM loans WHERE user_id = ? AND book_id = ? AND status IN ('pending','approved','checked_out')`,
       [userId, bookId],
     )
     if (existing) throw new DomainError('Ya tienes una solicitud o un préstamo de este libro.', 'duplicate')
-    if (freeCopies(bookId) <= 0) {
+    if ((await freeCopies(bookId)) <= 0) {
       throw new DomainError(
         'No quedan ejemplares libres. Puedes reservarlo y te avisaremos cuando vuelva uno.',
         'no_copies',
       )
     }
-    run(`UPDATE reservations SET status = 'cancelled', updated_at = ? WHERE user_id = ? AND book_id = ? AND status = 'waiting'`, [
+    await run(`UPDATE reservations SET status = 'cancelled', updated_at = ? WHERE user_id = ? AND book_id = ? AND status = 'waiting'`, [
       now(),
       userId,
       bookId,
     ])
-    const { lastInsertRowid: loanId } = run(`INSERT INTO loans (user_id, book_id, status) VALUES (?, ?, 'pending')`, [
+    const { lastInsertRowid: loanId } = await run(`INSERT INTO loans (user_id, book_id, status) VALUES (?, ?, 'pending')`, [
       userId,
       bookId,
     ])
-    logAudit({
+    await logAudit({
       actorId: userId,
       action: 'loan.requested',
       entityType: 'loan',
@@ -377,41 +376,41 @@ export function requestLoan(userId: number, bookId: number): { loanId: number } 
   })
 }
 
-export function reserveBook(userId: number, bookId: number): { reservationId: number; position: number } {
-  return transaction(() => {
-    const user = get<{ status: string }>('SELECT status FROM users WHERE id = ?', [userId])
+export async function reserveBook(userId: number, bookId: number): Promise<{ reservationId: number; position: number }> {
+  return await transaction(async () => {
+    const user = await get<{ status: string }>('SELECT status FROM users WHERE id = ?', [userId])
     if (!user || user.status !== 'active') {
       throw new DomainError('Tu cuenta está suspendida. Escríbenos para revisarla.', 'not_eligible')
     }
-    if (pendingConsents(userId).length) {
+    if ((await pendingConsents(userId)).length) {
       throw new DomainError('Acepta la versión vigente de los términos y la autorización de datos en «Mis préstamos» para reservar.', 'not_eligible')
     }
-    const book = get<{ id: number; title: string }>(`SELECT id, title FROM books WHERE id = ? AND status = 'active'`, [
+    const book = await get<{ id: number; title: string }>(`SELECT id, title FROM books WHERE id = ? AND status = 'active'`, [
       bookId,
     ])
     if (!book) throw new DomainError('Este libro ya no está en el catálogo.', 'not_found')
     const total =
-      get<{ n: number }>(`SELECT COUNT(*) AS n FROM copies WHERE book_id = ? AND status NOT IN ('lost','withdrawn')`, [
+      (await get<{ n: number }>(`SELECT COUNT(*) AS n FROM copies WHERE book_id = ? AND status NOT IN ('lost','withdrawn')`, [
         bookId,
-      ])?.n ?? 0
+      ]))?.n ?? 0
     if (total === 0) {
       throw new DomainError('Este título todavía no tiene ejemplares en la biblioteca, así que no se puede reservar.', 'no_copies')
     }
-    if (freeCopies(bookId) > 0) {
+    if ((await freeCopies(bookId)) > 0) {
       throw new DomainError('Hay ejemplares libres: solicita el préstamo directamente.', 'copies_available')
     }
-    const hasLoan = get<{ id: number }>(
+    const hasLoan = await get<{ id: number }>(
       `SELECT id FROM loans WHERE user_id = ? AND book_id = ? AND status IN ('pending','approved','checked_out')`,
       [userId, bookId],
     )
     if (hasLoan) throw new DomainError('Ya tienes este libro pedido o prestado.', 'duplicate')
-    const waiting = get<{ id: number }>(
+    const waiting = await get<{ id: number }>(
       `SELECT id FROM reservations WHERE user_id = ? AND book_id = ? AND status = 'waiting'`,
       [userId, bookId],
     )
     if (waiting) throw new DomainError('Ya estás en la lista de espera de este libro.', 'duplicate')
     const myWaiting =
-      get<{ n: number }>(`SELECT COUNT(*) AS n FROM reservations WHERE user_id = ? AND status = 'waiting'`, [userId])
+      (await get<{ n: number }>(`SELECT COUNT(*) AS n FROM reservations WHERE user_id = ? AND status = 'waiting'`, [userId]))
         ?.n ?? 0
     if (myWaiting >= LOAN_RULES.maxActiveReservations) {
       throw new DomainError(
@@ -419,14 +418,14 @@ export function reserveBook(userId: number, bookId: number): { reservationId: nu
         'limit',
       )
     }
-    const { lastInsertRowid: reservationId } = run('INSERT INTO reservations (user_id, book_id) VALUES (?, ?)', [
+    const { lastInsertRowid: reservationId } = await run('INSERT INTO reservations (user_id, book_id) VALUES (?, ?)', [
       userId,
       bookId,
     ])
     const position =
-      get<{ n: number }>(`SELECT COUNT(*) AS n FROM reservations WHERE book_id = ? AND status = 'waiting'`, [bookId])
+      (await get<{ n: number }>(`SELECT COUNT(*) AS n FROM reservations WHERE book_id = ? AND status = 'waiting'`, [bookId]))
         ?.n ?? 1
-    logAudit({
+    await logAudit({
       actorId: userId,
       action: 'reservation.created',
       entityType: 'reservation',
@@ -437,9 +436,9 @@ export function reserveBook(userId: number, bookId: number): { reservationId: nu
   })
 }
 
-export function cancelReservation(actor: Actor, reservationId: number) {
-  transaction(() => {
-    const reservation = get<{ id: number; user_id: number; book_id: number; status: string }>(
+export async function cancelReservation(actor: Actor, reservationId: number) {
+  await transaction(async () => {
+    const reservation = await get<{ id: number; user_id: number; book_id: number; status: string }>(
       'SELECT id, user_id, book_id, status FROM reservations WHERE id = ?',
       [reservationId],
     )
@@ -448,43 +447,43 @@ export function cancelReservation(actor: Actor, reservationId: number) {
       throw new DomainError('No puedes cancelar la reserva de otra persona.', 'forbidden')
     }
     if (reservation.status !== 'waiting') throw new DomainError('La reserva ya no está en espera.', 'invalid_state')
-    run(`UPDATE reservations SET status = 'cancelled', updated_at = ? WHERE id = ?`, [now(), reservationId])
-    logAudit({
+    await run(`UPDATE reservations SET status = 'cancelled', updated_at = ? WHERE id = ?`, [now(), reservationId])
+    await logAudit({
       actorId: actor.id,
       action: 'reservation.cancelled',
       entityType: 'reservation',
       entityId: reservationId,
-      summary: `Canceló la reserva de «${bookTitle(reservation.book_id)}»`,
+      summary: `Canceló la reserva de «${await bookTitle(reservation.book_id)}»`,
     })
   })
 }
 
-export function cancelLoan(actor: Actor, loanId: number) {
+export async function cancelLoan(actor: Actor, loanId: number) {
   const effects: Effect[] = []
-  transaction(() => {
-    const loan = loadLoanForUpdate(loanId)
+  await transaction(async () => {
+    const loan = await loadLoanForUpdate(loanId)
     if (!actor.isStaff && loan.user_id !== actor.id) {
       throw new DomainError('No puedes cancelar la solicitud de otra persona.', 'forbidden')
     }
     if (loan.status !== 'pending' && loan.status !== 'approved') {
       throw new DomainError('Solo se pueden cancelar solicitudes pendientes o ejemplares por recoger.', 'invalid_state')
     }
-    run(`UPDATE loans SET status = 'cancelled', updated_at = ? WHERE id = ?`, [now(), loanId])
-    if (loan.status === 'approved' && loan.copy_id) releaseCopy(loan.copy_id, actor.id, effects)
-    logAudit({
+    await run(`UPDATE loans SET status = 'cancelled', updated_at = ? WHERE id = ?`, [now(), loanId])
+    if (loan.status === 'approved' && loan.copy_id) await releaseCopy(loan.copy_id, actor.id, effects)
+    await logAudit({
       actorId: actor.id,
       action: 'loan.cancelled',
       entityType: 'loan',
       entityId: loanId,
-      summary: `Canceló la solicitud de «${bookTitle(loan.book_id)}»`,
+      summary: `Canceló la solicitud de «${await bookTitle(loan.book_id)}»`,
     })
   })
   runEffects(effects)
 }
 
-export function renewLoan(actor: Actor, loanId: number): { dueAt: string } {
-  return transaction(() => {
-    const loan = loadLoanForUpdate(loanId)
+export async function renewLoan(actor: Actor, loanId: number): Promise<{ dueAt: string }> {
+  return await transaction(async () => {
+    const loan = await loadLoanForUpdate(loanId)
     if (!actor.isStaff && loan.user_id !== actor.id) {
       throw new DomainError('No puedes renovar el préstamo de otra persona.', 'forbidden')
     }
@@ -498,20 +497,20 @@ export function renewLoan(actor: Actor, loanId: number): { dueAt: string } {
       throw new DomainError(`Este préstamo ya usó sus ${LOAN_RULES.maxRenewals} renovaciones.`, 'limit')
     }
     const waiting =
-      get<{ n: number }>(`SELECT COUNT(*) AS n FROM reservations WHERE book_id = ? AND status = 'waiting'`, [
+      (await get<{ n: number }>(`SELECT COUNT(*) AS n FROM reservations WHERE book_id = ? AND status = 'waiting'`, [
         loan.book_id,
-      ])?.n ?? 0
+      ]))?.n ?? 0
     if (waiting > 0) {
       throw new DomainError('Otra persona está esperando este libro, así que no se puede renovar.', 'reserved')
     }
     const dueAt = dueDateFrom(new Date(loan.due_at))
-    run('UPDATE loans SET due_at = ?, renewals = renewals + 1, updated_at = ? WHERE id = ?', [dueAt, now(), loanId])
-    logAudit({
+    await run('UPDATE loans SET due_at = ?, renewals = renewals + 1, updated_at = ? WHERE id = ?', [dueAt, now(), loanId])
+    await logAudit({
       actorId: actor.id,
       action: 'loan.renewed',
       entityType: 'loan',
       entityId: loanId,
-      summary: `Renovó «${bookTitle(loan.book_id)}» hasta el ${formatDate(dueAt)}`,
+      summary: `Renovó «${await bookTitle(loan.book_id)}» hasta el ${formatDate(dueAt)}`,
     })
     return { dueAt }
   })
@@ -519,12 +518,16 @@ export function renewLoan(actor: Actor, loanId: number): { dueAt: string } {
 
 /* ───────────────────────── Personal de biblioteca ───────────────────────── */
 
-function assignCopy(loan: { id: number; book_id: number }, staffId: number, copyId?: number): { copyId: number; deadline: string } {
+async function assignCopy(
+  loan: { id: number; book_id: number },
+  staffId: number,
+  copyId?: number,
+): Promise<{ copyId: number; deadline: string }> {
   const copy = copyId
-    ? get<{ id: number; book_id: number; status: CopyStatus }>('SELECT id, book_id, status FROM copies WHERE id = ?', [
+    ? await get<{ id: number; book_id: number; status: CopyStatus }>('SELECT id, book_id, status FROM copies WHERE id = ?', [
         copyId,
       ])
-    : get<{ id: number; book_id: number; status: CopyStatus }>(
+    : await get<{ id: number; book_id: number; status: CopyStatus }>(
         `SELECT id, book_id, status FROM copies WHERE book_id = ? AND status = 'available'
           ORDER BY CASE condition WHEN 'new' THEN 0 WHEN 'good' THEN 1 WHEN 'worn' THEN 2 ELSE 3 END, code LIMIT 1`,
         [loan.book_id],
@@ -536,8 +539,8 @@ function assignCopy(loan: { id: number; book_id: number }, staffId: number, copy
     )
   }
   const deadline = pickupDeadline()
-  run(`UPDATE copies SET status = 'reserved', updated_at = ? WHERE id = ?`, [now(), copy.id])
-  run(
+  await run(`UPDATE copies SET status = 'reserved', updated_at = ? WHERE id = ?`, [now(), copy.id])
+  await run(
     `UPDATE loans SET status = 'approved', copy_id = ?, decided_at = ?, decided_by = ?, pickup_deadline = ?, updated_at = ?
       WHERE id = ?`,
     [copy.id, now(), staffId, deadline, now(), loan.id],
@@ -545,15 +548,15 @@ function assignCopy(loan: { id: number; book_id: number }, staffId: number, copy
   return { copyId: copy.id, deadline }
 }
 
-export function approveLoan(staffId: number, loanId: number, copyId?: number) {
+export async function approveLoan(staffId: number, loanId: number, copyId?: number) {
   const effects: Effect[] = []
-  transaction(() => {
-    const loan = loadLoanForUpdate(loanId)
+  await transaction(async () => {
+    const loan = await loadLoanForUpdate(loanId)
     if (loan.status !== 'pending') throw new DomainError('Solo se pueden aprobar solicitudes pendientes.', 'invalid_state')
-    const { deadline } = assignCopy(loan, staffId, copyId)
-    const reader = get<{ name: string; email: string }>('SELECT name, email FROM users WHERE id = ?', [loan.user_id])!
-    const title = bookTitle(loan.book_id)
-    logAudit({
+    const { deadline } = await assignCopy(loan, staffId, copyId)
+    const reader = (await get<{ name: string; email: string }>('SELECT name, email FROM users WHERE id = ?', [loan.user_id]))!
+    const title = await bookTitle(loan.book_id)
+    await logAudit({
       actorId: staffId,
       action: 'loan.approved',
       entityType: 'loan',
@@ -565,27 +568,27 @@ export function approveLoan(staffId: number, loanId: number, copyId?: number) {
   runEffects(effects)
 }
 
-export function rejectLoan(staffId: number, loanId: number, reason: string) {
+export async function rejectLoan(staffId: number, loanId: number, reason: string) {
   const effects: Effect[] = []
   const cleanReason = reason.trim()
   if (cleanReason.length < 5) {
-    throw new DomainError('Explica el motivo del rechazo (al menos 5 caracteres): el lector lo verá.', 'reason_required', {
+    throw new DomainError('Explica el motivo del rechazo (al menos 5 caracteres).', 'reason_required', {
       reason: 'Escribe el motivo.',
     })
   }
-  transaction(() => {
-    const loan = loadLoanForUpdate(loanId)
+  await transaction(async () => {
+    const loan = await loadLoanForUpdate(loanId)
     if (loan.status !== 'pending' && loan.status !== 'approved') {
       throw new DomainError('Solo se pueden rechazar solicitudes pendientes o por recoger.', 'invalid_state')
     }
-    run(
+    await run(
       `UPDATE loans SET status = 'rejected', rejection_reason = ?, decided_at = ?, decided_by = ?, updated_at = ? WHERE id = ?`,
       [cleanReason.slice(0, 300), now(), staffId, now(), loanId],
     )
-    if (loan.status === 'approved' && loan.copy_id) releaseCopy(loan.copy_id, staffId, effects)
-    const reader = get<{ name: string; email: string }>('SELECT name, email FROM users WHERE id = ?', [loan.user_id])!
-    const title = bookTitle(loan.book_id)
-    logAudit({
+    if (loan.status === 'approved' && loan.copy_id) await releaseCopy(loan.copy_id, staffId, effects)
+    const reader = (await get<{ name: string; email: string }>('SELECT name, email FROM users WHERE id = ?', [loan.user_id]))!
+    const title = await bookTitle(loan.book_id)
+    await logAudit({
       actorId: staffId,
       action: 'loan.rejected',
       entityType: 'loan',
@@ -614,41 +617,41 @@ export function rejectLoan(staffId: number, loanId: number, reason: string) {
 }
 
 /** Entrega en el mostrador. Una solicitud pendiente se aprueba y entrega en un solo paso. */
-export function checkoutLoan(staffId: number, loanId: number): { dueAt: string } {
-  return transaction(() => {
-    const loan = loadLoanForUpdate(loanId)
+export async function checkoutLoan(staffId: number, loanId: number): Promise<{ dueAt: string }> {
+  return await transaction(async () => {
+    const loan = await loadLoanForUpdate(loanId)
     let copyId = loan.copy_id
     if (loan.status === 'pending') {
-      copyId = assignCopy(loan, staffId).copyId
+      copyId = (await assignCopy(loan, staffId)).copyId
     } else if (loan.status !== 'approved') {
       throw new DomainError('Solo se pueden entregar solicitudes pendientes o ejemplares apartados.', 'invalid_state')
     }
     if (!copyId) throw new DomainError('La solicitud no tiene un ejemplar asignado.', 'invalid_state')
     const dueAt = dueDateFrom(new Date())
-    run(`UPDATE copies SET status = 'on_loan', updated_at = ? WHERE id = ?`, [now(), copyId])
-    run(
+    await run(`UPDATE copies SET status = 'on_loan', updated_at = ? WHERE id = ?`, [now(), copyId])
+    await run(
       `UPDATE loans SET status = 'checked_out', checked_out_at = ?, checked_out_by = ?, due_at = ?, updated_at = ?
         WHERE id = ?`,
       [now(), staffId, dueAt, now(), loanId],
     )
-    const code = get<{ code: string }>('SELECT code FROM copies WHERE id = ?', [copyId])?.code
-    logAudit({
+    const code = (await get<{ code: string }>('SELECT code FROM copies WHERE id = ?', [copyId]))?.code
+    await logAudit({
       actorId: staffId,
       action: 'loan.checked_out',
       entityType: 'loan',
       entityId: loanId,
-      summary: `Entregó el ejemplar ${code} de «${bookTitle(loan.book_id)}» (devolución: ${formatDate(dueAt)})`,
+      summary: `Entregó el ejemplar ${code} de «${await bookTitle(loan.book_id)}» (devolución: ${formatDate(dueAt)})`,
     })
     return { dueAt }
   })
 }
 
-export function returnLoan(staffId: number, loanId: number, options: { toMaintenance?: boolean } = {}) {
+export async function returnLoan(staffId: number, loanId: number, options: { toMaintenance?: boolean } = {}) {
   const effects: Effect[] = []
-  transaction(() => {
-    const loan = loadLoanForUpdate(loanId)
+  await transaction(async () => {
+    const loan = await loadLoanForUpdate(loanId)
     if (loan.status !== 'checked_out') throw new DomainError('Ese libro no figura como prestado.', 'invalid_state')
-    run(`UPDATE loans SET status = 'returned', returned_at = ?, returned_by = ?, updated_at = ? WHERE id = ?`, [
+    await run(`UPDATE loans SET status = 'returned', returned_at = ?, returned_by = ?, updated_at = ? WHERE id = ?`, [
       now(),
       staffId,
       now(),
@@ -656,40 +659,40 @@ export function returnLoan(staffId: number, loanId: number, options: { toMainten
     ])
     if (loan.copy_id) {
       if (options.toMaintenance) {
-        run(`UPDATE copies SET status = 'maintenance', updated_at = ? WHERE id = ?`, [now(), loan.copy_id])
+        await run(`UPDATE copies SET status = 'maintenance', updated_at = ? WHERE id = ?`, [now(), loan.copy_id])
       } else {
-        releaseCopy(loan.copy_id, staffId, effects)
+        await releaseCopy(loan.copy_id, staffId, effects)
       }
     }
-    logAudit({
+    await logAudit({
       actorId: staffId,
       action: 'loan.returned',
       entityType: 'loan',
       entityId: loanId,
-      summary: `Registró la devolución de «${bookTitle(loan.book_id)}»${options.toMaintenance ? ' (a reparación)' : ''}`,
+      summary: `Registró la devolución de «${await bookTitle(loan.book_id)}»${options.toMaintenance ? ' (a reparación)' : ''}`,
     })
   })
   runEffects(effects)
 }
 
 /** Caduca los apartados que nadie recogió a tiempo y devuelve los ejemplares a la cola. */
-export function expireStalePickups(): number {
-  const stale = all<{ id: number; copy_id: number | null; book_id: number }>(
+export async function expireStalePickups(): Promise<number> {
+  const stale = await all<{ id: number; copy_id: number | null; book_id: number }>(
     `SELECT id, copy_id, book_id FROM loans WHERE status = 'approved' AND pickup_deadline < ?`,
     [now()],
   )
   if (stale.length === 0) return 0
   const effects: Effect[] = []
-  transaction(() => {
+  await transaction(async () => {
     for (const loan of stale) {
-      run(`UPDATE loans SET status = 'expired', updated_at = ? WHERE id = ? AND status = 'approved'`, [now(), loan.id])
-      if (loan.copy_id) releaseCopy(loan.copy_id, null, effects)
-      logAudit({
+      await run(`UPDATE loans SET status = 'expired', updated_at = ? WHERE id = ? AND status = 'approved'`, [now(), loan.id])
+      if (loan.copy_id) await releaseCopy(loan.copy_id, null, effects)
+      await logAudit({
         actorId: null,
         action: 'loan.expired',
         entityType: 'loan',
         entityId: loan.id,
-        summary: `Venció el plazo para recoger «${bookTitle(loan.book_id)}»`,
+        summary: `Venció el plazo para recoger «${await bookTitle(loan.book_id)}»`,
       })
     }
   })
@@ -697,7 +700,7 @@ export function expireStalePickups(): number {
   return stale.length
 }
 
-export function addCopies(
+export async function addCopies(
   staffId: number,
   bookId: number,
   count: number,
@@ -707,12 +710,12 @@ export function addCopies(
     throw new DomainError('Indica entre 1 y 50 ejemplares.', 'invalid_count', { count: 'Entre 1 y 50.' })
   }
   const effects: Effect[] = []
-  transaction(() => {
-    const book = get<{ title: string; status: string }>('SELECT title, status FROM books WHERE id = ?', [bookId])
+  await transaction(async () => {
+    const book = await get<{ title: string; status: string }>('SELECT title, status FROM books WHERE id = ?', [bookId])
     if (!book) throw new DomainError('La ficha ya no existe.', 'not_found')
-    const ids = insertCopies(bookId, count, options)
-    for (const id of ids) releaseCopy(id, staffId, effects)
-    logAudit({
+    const ids = await insertCopies(bookId, count, options)
+    for (const id of ids) await releaseCopy(id, staffId, effects)
+    await logAudit({
       actorId: staffId,
       action: 'copy.added',
       entityType: 'book',
@@ -725,13 +728,13 @@ export function addCopies(
 
 const MANUAL_COPY_STATUSES: CopyStatus[] = ['available', 'maintenance', 'lost', 'withdrawn']
 
-export function setCopyStatus(staffId: number, copyId: number, status: CopyStatus) {
+export async function setCopyStatus(staffId: number, copyId: number, status: CopyStatus) {
   if (!MANUAL_COPY_STATUSES.includes(status)) {
     throw new DomainError('Ese estado lo asigna el sistema al prestar o apartar.', 'invalid_status')
   }
   const effects: Effect[] = []
-  transaction(() => {
-    const copy = getCopy(copyId)
+  await transaction(async () => {
+    const copy = await getCopy(copyId)
     if (!copy) throw new DomainError('El ejemplar ya no existe.', 'not_found')
     if (copy.status === 'reserved' || copy.status === 'on_loan') {
       throw new DomainError(
@@ -741,16 +744,16 @@ export function setCopyStatus(staffId: number, copyId: number, status: CopyStatu
     }
     if (copy.status === status) return
     if (status === 'available') {
-      releaseCopy(copyId, staffId, effects)
+      await releaseCopy(copyId, staffId, effects)
     } else {
-      run('UPDATE copies SET status = ?, updated_at = ? WHERE id = ?', [status, now(), copyId])
+      await run('UPDATE copies SET status = ?, updated_at = ? WHERE id = ?', [status, now(), copyId])
     }
-    logAudit({
+    await logAudit({
       actorId: staffId,
       action: 'copy.status_changed',
       entityType: 'copy',
       entityId: copyId,
-      summary: `Cambió el ejemplar ${copy.code} de «${bookTitle(copy.bookId)}» a «${status}»`,
+      summary: `Cambió el ejemplar ${copy.code} de «${await bookTitle(copy.bookId)}» a «${status}»`,
       details: { from: copy.status, to: status },
     })
   })
@@ -772,9 +775,9 @@ const VIEW_FILTER: Record<StaffLoanView, { where: string; order: string }> = {
   },
 }
 
-export function listStaffLoans(options: { view: StaffLoanView; q?: string; page: number; pageSize: number }) {
+export async function listStaffLoans(options: { view: StaffLoanView; q?: string; page: number; pageSize: number }) {
   const filter = VIEW_FILTER[options.view]
-  const params: Record<string, SQLInputValue> = {}
+  const params: Record<string, SqlValue> = {}
   const where = [filter.where]
   if (filter.where.includes(':now')) params.now = now()
   if (options.q?.trim()) {
@@ -783,34 +786,42 @@ export function listStaffLoans(options: { view: StaffLoanView; q?: string; page:
   }
   const clause = `WHERE ${where.join(' AND ')}`
   const total =
-    get<{ n: number }>(
+    (await get<{ n: number }>(
       `SELECT COUNT(*) AS n FROM loans l JOIN users u ON u.id = l.user_id JOIN books b ON b.id = l.book_id
          LEFT JOIN copies c ON c.id = l.copy_id ${clause}`,
       params,
-    )?.n ?? 0
-  const loans = all<LoanRow>(`${LOAN_SELECT} ${clause} ORDER BY ${filter.order} LIMIT :limit OFFSET :offset`, {
+    ))?.n ?? 0
+  const loans = (await all<LoanRow>(`${LOAN_SELECT} ${clause} ORDER BY ${filter.order} LIMIT :limit OFFSET :offset`, {
     ...params,
     limit: options.pageSize,
     offset: (options.page - 1) * options.pageSize,
-  }).map(toLoan)
+  })).map(toLoan)
   return { loans, total }
 }
 
-export function countStaffLoanViews(): Record<StaffLoanView | 'reservations', number> {
+export async function countStaffLoanViews(): Promise<Record<StaffLoanView | 'reservations', number>> {
   const n = now()
-  const count = (sql: string, params: SQLInputValue[] = []) => get<{ n: number }>(sql, params)?.n ?? 0
+  const count = async (sql: string, params: SqlValue[] = []) => (await get<{ n: number }>(sql, params))?.n ?? 0
+  const [requests, pickup, active, overdue, history, reservations] = await Promise.all([
+    count(`SELECT COUNT(*) AS n FROM loans WHERE status = 'pending'`),
+    count(`SELECT COUNT(*) AS n FROM loans WHERE status = 'approved'`),
+    count(`SELECT COUNT(*) AS n FROM loans WHERE status = 'checked_out' AND due_at >= ?`, [n]),
+    count(`SELECT COUNT(*) AS n FROM loans WHERE status = 'checked_out' AND due_at < ?`, [n]),
+    count(`SELECT COUNT(*) AS n FROM loans WHERE status IN ('returned','rejected','cancelled','expired')`),
+    count(`SELECT COUNT(*) AS n FROM reservations WHERE status = 'waiting'`),
+  ])
   return {
-    requests: count(`SELECT COUNT(*) AS n FROM loans WHERE status = 'pending'`),
-    pickup: count(`SELECT COUNT(*) AS n FROM loans WHERE status = 'approved'`),
-    active: count(`SELECT COUNT(*) AS n FROM loans WHERE status = 'checked_out' AND due_at >= ?`, [n]),
-    overdue: count(`SELECT COUNT(*) AS n FROM loans WHERE status = 'checked_out' AND due_at < ?`, [n]),
-    history: count(`SELECT COUNT(*) AS n FROM loans WHERE status IN ('returned','rejected','cancelled','expired')`),
-    reservations: count(`SELECT COUNT(*) AS n FROM reservations WHERE status = 'waiting'`),
+    requests,
+    pickup,
+    active,
+    overdue,
+    history,
+    reservations,
   }
 }
 
-export function listWaitingReservations(options: { q?: string; page: number; pageSize: number }) {
-  const params: Record<string, SQLInputValue> = {}
+export async function listWaitingReservations(options: { q?: string; page: number; pageSize: number }) {
+  const params: Record<string, SqlValue> = {}
   const where = [`r.status = 'waiting'`]
   if (options.q?.trim()) {
     where.push('(u.name LIKE :q OR u.email LIKE :q OR b.title LIKE :q)')
@@ -818,40 +829,61 @@ export function listWaitingReservations(options: { q?: string; page: number; pag
   }
   const clause = `WHERE ${where.join(' AND ')}`
   const total =
-    get<{ n: number }>(
+    (await get<{ n: number }>(
       `SELECT COUNT(*) AS n FROM reservations r JOIN users u ON u.id = r.user_id JOIN books b ON b.id = r.book_id ${clause}`,
       params,
-    )?.n ?? 0
-  const reservations = all<ReservationRow>(
+    ))?.n ?? 0
+  const reservations = (await all<ReservationRow>(
     `${RESERVATION_SELECT} ${clause} ORDER BY b.title, r.created_at LIMIT :limit OFFSET :offset`,
     { ...params, limit: options.pageSize, offset: (options.page - 1) * options.pageSize },
-  ).map(toReservation)
+  )).map(toReservation)
   return { reservations, total }
 }
 
-export function countWaitingReservations(bookId: number): number {
+export async function countWaitingReservations(bookId: number): Promise<number> {
   return (
-    get<{ n: number }>(`SELECT COUNT(*) AS n FROM reservations WHERE book_id = ? AND status = 'waiting'`, [bookId])?.n ?? 0
+    (await get<{ n: number }>(`SELECT COUNT(*) AS n FROM reservations WHERE book_id = ? AND status = 'waiting'`, [bookId]))?.n ?? 0
   )
 }
 
 /** Préstamos efectivamente entregados: decide si ordenar por popularidad tiene sentido. */
-export function countCirculatedLoans(): number {
-  return get<{ n: number }>(`SELECT COUNT(*) AS n FROM loans WHERE status IN ('checked_out','returned')`)?.n ?? 0
+export async function countCirculatedLoans(): Promise<number> {
+  return (await get<{ n: number }>(`SELECT COUNT(*) AS n FROM loans WHERE status IN ('checked_out','returned')`))?.n ?? 0
 }
 
-export function getDashboardStats() {
+export async function getDashboardStats() {
   const n = now()
-  const count = (sql: string, params: SQLInputValue[] = []) => get<{ n: number }>(sql, params)?.n ?? 0
+  const count = async (sql: string, params: SqlValue[] = []) => (await get<{ n: number }>(sql, params))?.n ?? 0
+  const [
+    books,
+    copiesTotal,
+    copiesAvailable,
+    activeLoans,
+    pendingRequests,
+    pickups,
+    overdue,
+    waitingReservations,
+    readers,
+  ] = await Promise.all([
+    count(`SELECT COUNT(*) AS n FROM books WHERE status = 'active'`),
+    count(`SELECT COUNT(*) AS n FROM copies WHERE status NOT IN ('lost','withdrawn')`),
+    count(`SELECT COUNT(*) AS n FROM copies WHERE status = 'available'`),
+    count(`SELECT COUNT(*) AS n FROM loans WHERE status = 'checked_out'`),
+    count(`SELECT COUNT(*) AS n FROM loans WHERE status = 'pending'`),
+    count(`SELECT COUNT(*) AS n FROM loans WHERE status = 'approved'`),
+    count(`SELECT COUNT(*) AS n FROM loans WHERE status = 'checked_out' AND due_at < ?`, [n]),
+    count(`SELECT COUNT(*) AS n FROM reservations WHERE status = 'waiting'`),
+    count(`SELECT COUNT(*) AS n FROM users WHERE role = 'reader' AND status = 'active'`),
+  ])
   return {
-    books: count(`SELECT COUNT(*) AS n FROM books WHERE status = 'active'`),
-    copiesTotal: count(`SELECT COUNT(*) AS n FROM copies WHERE status NOT IN ('lost','withdrawn')`),
-    copiesAvailable: count(`SELECT COUNT(*) AS n FROM copies WHERE status = 'available'`),
-    activeLoans: count(`SELECT COUNT(*) AS n FROM loans WHERE status = 'checked_out'`),
-    pendingRequests: count(`SELECT COUNT(*) AS n FROM loans WHERE status = 'pending'`),
-    pickups: count(`SELECT COUNT(*) AS n FROM loans WHERE status = 'approved'`),
-    overdue: count(`SELECT COUNT(*) AS n FROM loans WHERE status = 'checked_out' AND due_at < ?`, [n]),
-    waitingReservations: count(`SELECT COUNT(*) AS n FROM reservations WHERE status = 'waiting'`),
-    readers: count(`SELECT COUNT(*) AS n FROM users WHERE role = 'reader' AND status = 'active'`),
+    books,
+    copiesTotal,
+    copiesAvailable,
+    activeLoans,
+    pendingRequests,
+    pickups,
+    overdue,
+    waitingReservations,
+    readers,
   }
 }

@@ -42,38 +42,38 @@ describe('Cuentas y sesiones', () => {
 
   it('las sesiones guardan solo el hash del token y caducan', async () => {
     const user = await registerUser({ name: 'Mario', email: 'mario@test.example', password: 'clave-segura-123' })
-    const { token } = createSessionRecord(user.id)
-    assert.equal(get<{ n: number }>('SELECT COUNT(*) AS n FROM sessions WHERE id = ?', [token])?.n, 0)
-    assert.equal(findSessionUser(token)?.id, user.id)
-    run('UPDATE sessions SET expires_at = ? WHERE id = ?', [new Date(Date.now() - 1000).toISOString(), hashToken(token)])
-    assert.equal(findSessionUser(token), null)
-    const second = createSessionRecord(user.id)
-    deleteSession(second.token)
-    assert.equal(findSessionUser(second.token), null)
+    const { token } = await createSessionRecord(user.id)
+    assert.equal((await get<{ n: number }>('SELECT COUNT(*) AS n FROM sessions WHERE id = ?', [token]))?.n, 0)
+    assert.equal((await findSessionUser(token))?.id, user.id)
+    await run('UPDATE sessions SET expires_at = ? WHERE id = ?', [new Date(Date.now() - 1000).toISOString(), hashToken(token)])
+    assert.equal(await findSessionUser(token), null)
+    const second = await createSessionRecord(user.id)
+    await deleteSession(second.token)
+    assert.equal(await findSessionUser(second.token), null)
   })
 
   it('cambiar la contraseña exige la actual y cierra las demás sesiones', async () => {
     const user = await registerUser({ name: 'Nora', email: 'nora@test.example', password: 'clave-segura-123' })
-    const keep = createSessionRecord(user.id)
-    const other = createSessionRecord(user.id)
+    const keep = await createSessionRecord(user.id)
+    const other = await createSessionRecord(user.id)
     await assert.rejects(changePassword(user.id, 'mala', 'nueva-clave-segura'), (e: unknown) => isDomainError(e))
     await changePassword(user.id, 'clave-segura-123', 'nueva-clave-segura', keep.token)
-    assert.ok(findSessionUser(keep.token))
-    assert.equal(findSessionUser(other.token), null)
+    assert.ok(await findSessionUser(keep.token))
+    assert.equal(await findSessionUser(other.token), null)
     assert.ok(await authenticate('nora@test.example', 'nueva-clave-segura'))
   })
 
   it('el enlace de recuperación es de un solo uso', async () => {
     const user = await registerUser({ name: 'Olga', email: 'olga@test.example', password: 'clave-segura-123' })
     const token = 'token-de-prueba-suficientemente-largo'
-    run('INSERT INTO password_resets (user_id, token_hash, expires_at) VALUES (?, ?, ?)', [
+    await run('INSERT INTO password_resets (user_id, token_hash, expires_at) VALUES (?, ?, ?)', [
       user.id,
       hashToken(token),
       new Date(Date.now() + 3_600_000).toISOString(),
     ])
-    assert.equal(isResetTokenValid(token), true)
+    assert.equal(await isResetTokenValid(token), true)
     await resetPassword(token, 'otra-clave-segura')
-    assert.equal(isResetTokenValid(token), false)
+    assert.equal(await isResetTokenValid(token), false)
     await assert.rejects(resetPassword(token, 'una-mas-segura'), (e: unknown) => isDomainError(e) && e.code === 'invalid_token')
     assert.ok(await authenticate('olga@test.example', 'otra-clave-segura'))
   })

@@ -19,7 +19,7 @@ export default async function ActivityPage({ searchParams }: { searchParams: Pro
   const sp = await searchParams
   const tipo = sp.tipo && AUDIT_ENTITY_LABEL[sp.tipo] ? sp.tipo : undefined
   const page = Math.max(1, Number.parseInt(sp.pagina ?? '1', 10) || 1)
-  const { entries, total } = listAudit({ page, pageSize: PAGE_SIZE, entityType: tipo })
+  const { entries, total } = await listAudit({ page, pageSize: PAGE_SIZE, entityType: tipo })
 
   const tabs = [
     { key: 'todo', label: 'Todo', href: '/admin/actividad' },

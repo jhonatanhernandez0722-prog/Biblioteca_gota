@@ -12,7 +12,7 @@ export const metadata: Metadata = {
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
   const user = await requireStaff()
-  const counts = countStaffLoanViews()
+  const counts = await countStaffLoanViews()
   return (
     <div className={styles.shell}>
       <AdminNav

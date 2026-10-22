@@ -25,10 +25,8 @@ async function main() {
 
   const { env, resolveFromRoot } = await import('@/server/env')
   if (args.has('--reset')) {
-    const dbFile = resolveFromRoot(env().DATABASE_PATH)
-    for (const suffix of ['', '-wal', '-shm']) fs.rmSync(`${dbFile}${suffix}`, { force: true })
     fs.rmSync(path.join(resolveFromRoot(env().STORAGE_DIR), 'covers'), { recursive: true, force: true })
-    console.log('Base de datos y portadas borradas.')
+    console.log('Portadas borradas.')
   }
 
   const { get, run } = await import('@/server/db')
@@ -38,7 +36,7 @@ async function main() {
   const covers = await import('@/server/covers')
   const { OpenLibraryProvider } = await import('@/server/integrations/metadata/open-library')
 
-  if ((get<{ n: number }>('SELECT COUNT(*) AS n FROM users')?.n ?? 0) > 0) {
+  if (((await get<{ n: number }>('SELECT COUNT(*) AS n FROM users'))?.n ?? 0) > 0) {
     console.log('La base de datos ya tiene datos. Usa `npm run db:seed -- --reset` para empezar de cero.')
     return
   }
@@ -78,8 +76,8 @@ async function main() {
     }
 
     const isbn = details?.isbn13 ?? fallbackIsbn
-    const isbnTaken = isbn ? catalog.findPossibleDuplicates({ isbn }).exact.length > 0 : false
-    const { id } = catalog.createBook(
+    const isbnTaken = isbn ? (await catalog.findPossibleDuplicates({ isbn })).exact.length > 0 : false
+    const { id } = await catalog.createBook(
       {
         title: seed.title,
         authors: seed.authors,
@@ -108,13 +106,15 @@ async function main() {
       try {
         const buffer = await covers.fetchRemoteCover(details.coverUrl)
         const stored = await covers.storeCover(buffer, { rejectFlat: true })
-        catalog.setBookCover(id, stored.key, stored.color, staffId)
+        await catalog.setBookCover(id, stored.key, stored.color, staffId)
         withCover++
       } catch (error) {
         console.warn(`  · ${seed.title}: portada no disponible (${(error as Error).message})`)
       }
     }
-    circulation.addCopies(staffId, id, seed.copies, { location: `Sala general, estante ${String.fromCharCode(65 + (index % 8))}` })
+    await circulation.addCopies(staffId, id, seed.copies, {
+      location: `Sala general, estante ${String.fromCharCode(65 + (index % 8))}`,
+    })
     console.log(`  ✓ ${seed.title}${details ? ` (${details.publisher ?? 's. e.'}, ${details.year ?? seed.year})` : ''}`)
   }
   console.log(`Libros: ${SEED_BOOKS.length} · con portada de Open Library: ${withCover}`)
@@ -122,49 +122,49 @@ async function main() {
   /* Fechas de incorporación repartidas en los últimos 70 días, en un orden estable pero mezclado. */
   const scramble = (key: string) => [...key].reduce((h, c) => (h * 33 + c.charCodeAt(0)) >>> 0, 5381)
   const ordered = [...SEED_BOOKS].sort((a, b) => scramble(a.key) - scramble(b.key))
-  ordered.forEach((seed, i) => {
+  for (const [i, seed] of ordered.entries()) {
     const daysAgo = Math.round(70 - (i * 68) / ordered.length)
     const date = new Date(Date.now() - daysAgo * 86_400_000 - (i % 5) * 3_600_000).toISOString()
-    run('UPDATE books SET created_at = ?, updated_at = ? WHERE id = ?', [date, date, bookIds[seed.key]!])
-    run('UPDATE copies SET acquired_at = ?, created_at = ? WHERE book_id = ?', [date, date, bookIds[seed.key]!])
-  })
+    await run('UPDATE books SET created_at = ?, updated_at = ? WHERE id = ?', [date, date, bookIds[seed.key]!])
+    await run('UPDATE copies SET acquired_at = ?, created_at = ? WHERE book_id = ?', [date, date, bookIds[seed.key]!])
+  }
 
   /* Circulación de demostración, con las mismas reglas que la aplicación. */
   const day = 86_400_000
-  const backdate = (loanId: number, checkedOutDaysAgo: number) => {
+  const backdate = async (loanId: number, checkedOutDaysAgo: number) => {
     const out = new Date(Date.now() - checkedOutDaysAgo * day)
     const requested = new Date(out.getTime() - 2 * day)
     const due = new Date(out.getTime() + 21 * day)
-    run(
+    await run(
       `UPDATE loans SET requested_at = ?, decided_at = ?, checked_out_at = ?, due_at = ?, is_demo = 1 WHERE id = ?`,
       [requested.toISOString(), requested.toISOString(), out.toISOString(), due.toISOString(), loanId],
     )
   }
-  const lend = (userKey: string, bookKey: string, daysAgo: number) => {
-    const { loanId } = circulation.requestLoan(ids[userKey]!, bookIds[bookKey]!)
-    circulation.approveLoan(staffId, loanId)
-    circulation.checkoutLoan(staffId, loanId)
-    backdate(loanId, daysAgo)
+  const lend = async (userKey: string, bookKey: string, daysAgo: number) => {
+    const { loanId } = await circulation.requestLoan(ids[userKey]!, bookIds[bookKey]!)
+    await circulation.approveLoan(staffId, loanId)
+    await circulation.checkoutLoan(staffId, loanId)
+    await backdate(loanId, daysAgo)
     return loanId
   }
 
-  lend('samuel', 'cien-anos', 11)
-  lend('camila', 'cien-anos', 6)
-  lend('samuel', '1984', 24) // vencido hace 3 días
-  lend('reader', 'rayuela', 15)
-  const returned = lend('reader', 'principito', 40)
-  circulation.returnLoan(staffId, returned)
-  run('UPDATE loans SET returned_at = ?, updated_at = ? WHERE id = ?', [
+  await lend('samuel', 'cien-anos', 11)
+  await lend('camila', 'cien-anos', 6)
+  await lend('samuel', '1984', 24) // vencido hace 3 días
+  await lend('reader', 'rayuela', 15)
+  const returned = await lend('reader', 'principito', 40)
+  await circulation.returnLoan(staffId, returned)
+  await run('UPDATE loans SET returned_at = ?, updated_at = ? WHERE id = ?', [
     new Date(Date.now() - 22 * day).toISOString(),
     new Date(Date.now() - 22 * day).toISOString(),
     returned,
   ])
-  const ready = circulation.requestLoan(ids.reader!, bookIds['sombra-viento']!)
-  circulation.approveLoan(staffId, ready.loanId)
-  circulation.requestLoan(ids.reader!, bookIds.cosmos!)
-  circulation.requestLoan(ids.camila!, bookIds.ficciones!)
-  circulation.reserveBook(ids.reader!, bookIds['cien-anos']!)
-  run('UPDATE loans SET is_demo = 1')
+  const ready = await circulation.requestLoan(ids.reader!, bookIds['sombra-viento']!)
+  await circulation.approveLoan(staffId, ready.loanId)
+  await circulation.requestLoan(ids.reader!, bookIds.cosmos!)
+  await circulation.requestLoan(ids.camila!, bookIds.ficciones!)
+  await circulation.reserveBook(ids.reader!, bookIds['cien-anos']!)
+  await run('UPDATE loans SET is_demo = 1')
   console.log('Circulación de demostración creada.')
 
   console.log('\nCuentas de demostración:')

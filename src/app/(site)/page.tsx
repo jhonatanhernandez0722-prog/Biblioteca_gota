@@ -34,18 +34,18 @@ export default async function HomePage() {
     picked.forEach((b) => shown.add(b.id))
     return picked
   }
-  const pick = getEditorialPick()
+  const pick = await getEditorialPick()
   if (pick) shown.add(pick.id)
-  const heroBooks = take(getHeroBooks(8), 3)
-  const suggestions = getSearchSuggestions()
-  const [leadSummary, ...moreFeatured] = take(getFeaturedBooks(12), 4)
-  const lead = leadSummary ? getBookById(leadSummary.id) : null
-  const latest = take(getLatestBooks(24), 10)
-  const mostBorrowed = getMostBorrowed()
-  const categories = getCategoryIndex().slice(0, 10)
-  const available = take(getAvailableBooks(30, [...shown]), 10)
+  const heroBooks = take(await getHeroBooks(8), 3)
+  const suggestions = await getSearchSuggestions()
+  const [leadSummary, ...moreFeatured] = take(await getFeaturedBooks(12), 4)
+  const lead = leadSummary ? await getBookById(leadSummary.id) : null
+  const latest = take(await getLatestBooks(24), 10)
+  const mostBorrowed = await getMostBorrowed()
+  const categories = (await getCategoryIndex()).slice(0, 10)
+  const available = take(await getAvailableBooks(30, [...shown]), 10)
   const activeLoans = user
-    ? listUserLoans(user.id).filter((l) => ['pending', 'approved', 'checked_out'].includes(l.status)).length
+    ? (await listUserLoans(user.id)).filter((l) => ['pending', 'approved', 'checked_out'].includes(l.status)).length
     : 0
 
   const front = heroBooks[0]

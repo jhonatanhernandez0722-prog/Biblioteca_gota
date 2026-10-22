@@ -37,17 +37,17 @@ let ana: number
 let beto: number
 let carla: number
 
-function expectDomain(fn: () => unknown, code?: string) {
-  assert.throws(fn, (error: unknown) => {
+async function expectDomain(fn: () => Promise<unknown>, code?: string) {
+  await assert.rejects(fn, (error: unknown) => {
     assert.ok(isDomainError(error), `se esperaba DomainError y llegó ${String(error)}`)
     if (code) assert.equal(error.code, code)
     return true
   })
 }
 
-function newBook(title: string, copies: number) {
-  const { id } = createBook({ title, authors: ['Autora de Prueba'], categories: ['Novela'] }, staff)
-  if (copies) addCopies(staff, id, copies, {})
+async function newBook(title: string, copies: number) {
+  const { id } = await createBook({ title, authors: ['Autora de Prueba'], categories: ['Novela'] }, staff)
+  if (copies) await addCopies(staff, id, copies, {})
   return id
 }
 
@@ -60,196 +60,196 @@ before(async () => {
 })
 
 describe('Ciclo de un préstamo', () => {
-  it('solicitud → aprobación → entrega → renovación → devolución', () => {
-    const bookId = newBook('Libro del ciclo', 1)
-    const { loanId } = requestLoan(ana, bookId)
-    assert.equal(getLoan(loanId)?.status, 'pending')
+  it('solicitud → aprobación → entrega → renovación → devolución', async () => {
+    const bookId = await newBook('Libro del ciclo', 1)
+    const { loanId } = await requestLoan(ana, bookId)
+    assert.equal((await getLoan(loanId))?.status, 'pending')
     // La solicitud pendiente cuenta con el único ejemplar: nadie más puede pedirlo.
-    assert.equal(getBookById(bookId)?.availableCopies, 0)
-    expectDomain(() => requestLoan(beto, bookId), 'no_copies')
+    assert.equal((await getBookById(bookId))?.availableCopies, 0)
+    await expectDomain(async () => requestLoan(beto, bookId), 'no_copies')
 
-    approveLoan(staff, loanId)
-    const approved = getLoan(loanId)!
+    await approveLoan(staff, loanId)
+    const approved = (await getLoan(loanId))!
     assert.equal(approved.status, 'approved')
     assert.ok(approved.copyId)
-    assert.equal(listCopies(bookId)[0]?.status, 'reserved')
+    assert.equal((await listCopies(bookId))[0]?.status, 'reserved')
 
-    const { dueAt } = checkoutLoan(staff, loanId)
-    assert.equal(getLoan(loanId)?.status, 'checked_out')
-    assert.equal(listCopies(bookId)[0]?.status, 'on_loan')
+    const { dueAt } = await checkoutLoan(staff, loanId)
+    assert.equal((await getLoan(loanId))?.status, 'checked_out')
+    assert.equal((await listCopies(bookId))[0]?.status, 'on_loan')
     const days = (new Date(dueAt).getTime() - Date.now()) / 86_400_000
     assert.ok(days > LOAN_RULES.loanDays - 1 && days <= LOAN_RULES.loanDays + 1)
 
-    const renewed = renewLoan({ id: ana, isStaff: false }, loanId)
+    const renewed = await renewLoan({ id: ana, isStaff: false }, loanId)
     assert.ok(new Date(renewed.dueAt) > new Date(dueAt))
-    expectDomain(() => renewLoan({ id: beto, isStaff: false }, loanId), 'forbidden')
+    await expectDomain(async () => renewLoan({ id: beto, isStaff: false }, loanId), 'forbidden')
 
-    returnLoan(staff, loanId)
-    assert.equal(getLoan(loanId)?.status, 'returned')
-    assert.equal(listCopies(bookId)[0]?.status, 'available')
+    await returnLoan(staff, loanId)
+    assert.equal((await getLoan(loanId))?.status, 'returned')
+    assert.equal((await listCopies(bookId))[0]?.status, 'available')
   })
 
-  it('no permite pedir dos veces el mismo libro ni reservar si hay ejemplares libres', () => {
-    const bookId = newBook('Libro con dos ejemplares', 2)
-    requestLoan(ana, bookId)
-    expectDomain(() => requestLoan(ana, bookId), 'duplicate')
-    expectDomain(() => reserveBook(beto, bookId), 'copies_available')
+  it('no permite pedir dos veces el mismo libro ni reservar si hay ejemplares libres', async () => {
+    const bookId = await newBook('Libro con dos ejemplares', 2)
+    await requestLoan(ana, bookId)
+    await expectDomain(async () => requestLoan(ana, bookId), 'duplicate')
+    await expectDomain(async () => reserveBook(beto, bookId), 'copies_available')
   })
 
-  it('el rechazo exige un motivo y libera el ejemplar apartado', () => {
-    const bookId = newBook('Libro a rechazar', 1)
-    const { loanId } = requestLoan(beto, bookId)
-    approveLoan(staff, loanId)
-    expectDomain(() => rejectLoan(staff, loanId, 'no'), 'reason_required')
-    rejectLoan(staff, loanId, 'El ejemplar está en reparación.')
-    assert.equal(getLoan(loanId)?.status, 'rejected')
-    assert.equal(getLoan(loanId)?.rejectionReason, 'El ejemplar está en reparación.')
-    assert.equal(listCopies(bookId)[0]?.status, 'available')
+  it('el rechazo exige un motivo y libera el ejemplar apartado', async () => {
+    const bookId = await newBook('Libro a rechazar', 1)
+    const { loanId } = await requestLoan(beto, bookId)
+    await approveLoan(staff, loanId)
+    await expectDomain(async () => rejectLoan(staff, loanId, 'no'), 'reason_required')
+    await rejectLoan(staff, loanId, 'El ejemplar está en reparación.')
+    assert.equal((await getLoan(loanId))?.status, 'rejected')
+    assert.equal((await getLoan(loanId))?.rejectionReason, 'El ejemplar está en reparación.')
+    assert.equal((await listCopies(bookId))[0]?.status, 'available')
   })
 
-  it('no se renueva más de lo permitido', () => {
-    const bookId = newBook('Libro para renovar', 1)
-    const { loanId } = requestLoan(carla, bookId)
-    checkoutLoan(staff, loanId)
-    for (let i = 0; i < LOAN_RULES.maxRenewals; i++) renewLoan({ id: carla, isStaff: false }, loanId)
-    expectDomain(() => renewLoan({ id: carla, isStaff: false }, loanId), 'limit')
-    returnLoan(staff, loanId)
+  it('no se renueva más de lo permitido', async () => {
+    const bookId = await newBook('Libro para renovar', 1)
+    const { loanId } = await requestLoan(carla, bookId)
+    await checkoutLoan(staff, loanId)
+    for (let i = 0; i < LOAN_RULES.maxRenewals; i++) await renewLoan({ id: carla, isStaff: false }, loanId)
+    await expectDomain(async () => renewLoan({ id: carla, isStaff: false }, loanId), 'limit')
+    await returnLoan(staff, loanId)
   })
 })
 
 describe('Reservas y cola de espera', () => {
-  it('la devolución aparta el ejemplar para la primera persona en espera', () => {
-    const bookId = newBook('Libro muy pedido', 1)
-    const first = requestLoan(ana, bookId)
-    checkoutLoan(staff, first.loanId)
+  it('la devolución aparta el ejemplar para la primera persona en espera', async () => {
+    const bookId = await newBook('Libro muy pedido', 1)
+    const first = await requestLoan(ana, bookId)
+    await checkoutLoan(staff, first.loanId)
 
-    const r1 = reserveBook(beto, bookId)
-    const r2 = reserveBook(carla, bookId)
+    const r1 = await reserveBook(beto, bookId)
+    const r2 = await reserveBook(carla, bookId)
     assert.equal(r1.position, 1)
     assert.equal(r2.position, 2)
     // Con gente esperando no se puede renovar.
-    expectDomain(() => renewLoan({ id: ana, isStaff: false }, first.loanId), 'reserved')
+    await expectDomain(async () => renewLoan({ id: ana, isStaff: false }, first.loanId), 'reserved')
 
-    returnLoan(staff, first.loanId)
-    const state = getUserBookState(beto, bookId)
+    await returnLoan(staff, first.loanId)
+    const state = await getUserBookState(beto, bookId)
     assert.equal(state.loan?.status, 'approved', 'Beto recibe el ejemplar apartado')
     assert.equal(state.reservation, null)
-    assert.equal(listCopies(bookId)[0]?.status, 'reserved')
-    const carlaReservation = listUserReservations(carla).find((r) => r.bookId === bookId && r.status === 'waiting')
+    assert.equal((await listCopies(bookId))[0]?.status, 'reserved')
+    const carlaReservation = (await listUserReservations(carla)).find((r) => r.bookId === bookId && r.status === 'waiting')
     assert.equal(carlaReservation?.position, 1, 'Carla pasa a ser la siguiente')
 
     // Beto no lo recoge a tiempo: el apartado caduca y pasa a Carla.
-    run(`UPDATE loans SET pickup_deadline = ? WHERE id = ?`, [new Date(Date.now() - 60_000).toISOString(), state.loan!.id])
-    assert.equal(expireStalePickups(), 1)
-    assert.equal(getLoan(state.loan!.id)?.status, 'expired')
-    assert.equal(getUserBookState(carla, bookId).loan?.status, 'approved')
+    await run(`UPDATE loans SET pickup_deadline = ? WHERE id = ?`, [new Date(Date.now() - 60_000).toISOString(), state.loan!.id])
+    assert.equal(await expireStalePickups(), 1)
+    assert.equal((await getLoan(state.loan!.id))?.status, 'expired')
+    assert.equal((await getUserBookState(carla, bookId)).loan?.status, 'approved')
 
     // Carla cancela: el ejemplar vuelve a la estantería.
-    cancelLoan({ id: carla, isStaff: false }, getUserBookState(carla, bookId).loan!.id)
-    assert.equal(listCopies(bookId)[0]?.status, 'available')
+    await cancelLoan({ id: carla, isStaff: false }, (await getUserBookState(carla, bookId)).loan!.id)
+    assert.equal((await listCopies(bookId))[0]?.status, 'available')
   })
 
-  it('un ejemplar nuevo atiende directamente la cola', () => {
-    const bookId = newBook('Libro sin ejemplares libres', 1)
-    const { loanId } = requestLoan(ana, bookId)
-    checkoutLoan(staff, loanId)
-    reserveBook(carla, bookId)
-    addCopies(staff, bookId, 1, {})
-    assert.equal(getUserBookState(carla, bookId).loan?.status, 'approved')
-    returnLoan(staff, loanId)
+  it('un ejemplar nuevo atiende directamente la cola', async () => {
+    const bookId = await newBook('Libro sin ejemplares libres', 1)
+    const { loanId } = await requestLoan(ana, bookId)
+    await checkoutLoan(staff, loanId)
+    await reserveBook(carla, bookId)
+    await addCopies(staff, bookId, 1, {})
+    assert.equal((await getUserBookState(carla, bookId)).loan?.status, 'approved')
+    await returnLoan(staff, loanId)
   })
 })
 
 describe('Reglas de elegibilidad', () => {
-  it('un préstamo vencido bloquea nuevas solicitudes', () => {
-    const late = newBook('Libro vencido', 1)
-    const other = newBook('Otro libro', 1)
-    const { loanId } = requestLoan(beto, late)
-    checkoutLoan(staff, loanId)
-    run(`UPDATE loans SET due_at = ? WHERE id = ?`, [new Date(Date.now() - 86_400_000).toISOString(), loanId])
-    expectDomain(() => requestLoan(beto, other), 'not_eligible')
-    expectDomain(() => renewLoan({ id: beto, isStaff: false }, loanId), 'overdue')
-    returnLoan(staff, loanId)
-    requestLoan(beto, other)
+  it('un préstamo vencido bloquea nuevas solicitudes', async () => {
+    const late = await newBook('Libro vencido', 1)
+    const other = await newBook('Otro libro', 1)
+    const { loanId } = await requestLoan(beto, late)
+    await checkoutLoan(staff, loanId)
+    await run(`UPDATE loans SET due_at = ? WHERE id = ?`, [new Date(Date.now() - 86_400_000).toISOString(), loanId])
+    await expectDomain(async () => requestLoan(beto, other), 'not_eligible')
+    await expectDomain(async () => renewLoan({ id: beto, isStaff: false }, loanId), 'overdue')
+    await returnLoan(staff, loanId)
+    await requestLoan(beto, other)
   })
 
   it(`no permite más de ${LOAN_RULES.maxActiveLoans} libros a la vez`, async () => {
     const dani = (await registerUser({ name: 'Dani', email: 'dani@test.example', password: 'clave-segura-123', consents: { source: 'test' } })).id
-    for (let i = 0; i < LOAN_RULES.maxActiveLoans; i++) requestLoan(dani, newBook(`Límite ${i}`, 1))
-    expectDomain(() => requestLoan(dani, newBook('Uno de más', 1)), 'not_eligible')
+    for (let i = 0; i < LOAN_RULES.maxActiveLoans; i++) await requestLoan(dani, await newBook(`Límite ${i}`, 1))
+    await expectDomain(async () => requestLoan(dani, await newBook('Uno de más', 1)), 'not_eligible')
   })
 
   it('una cuenta suspendida no puede entrar ni pedir', async () => {
     const eva = (await registerUser({ name: 'Eva', email: 'eva@test.example', password: 'clave-segura-123', consents: { source: 'test' } })).id
-    setUserStatus({ id: staff, role: 'librarian' }, eva, 'suspended')
-    expectDomain(() => requestLoan(eva, newBook('Libro para Eva', 1)), 'not_eligible')
+    await setUserStatus({ id: staff, role: 'librarian' }, eva, 'suspended')
+    await expectDomain(async () => requestLoan(eva, await newBook('Libro para Eva', 1)), 'not_eligible')
     await assert.rejects(authenticate('eva@test.example', 'clave-segura-123'), (e: unknown) => isDomainError(e))
   })
 })
 
 describe('Ejemplares y fichas', () => {
-  it('no cambia a mano el estado de un ejemplar prestado', () => {
-    const bookId = newBook('Libro con ejemplar prestado', 1)
-    const { loanId } = requestLoan(carla, bookId)
-    checkoutLoan(staff, loanId)
-    const copy = listCopies(bookId)[0]!
-    expectDomain(() => setCopyStatus(staff, copy.id, 'lost'), 'in_circulation')
-    expectDomain(() => setCopyStatus(staff, copy.id, 'on_loan'), 'invalid_status')
-    returnLoan(staff, loanId)
-    setCopyStatus(staff, copy.id, 'maintenance')
-    assert.equal(listCopies(bookId)[0]?.status, 'maintenance')
+  it('no cambia a mano el estado de un ejemplar prestado', async () => {
+    const bookId = await newBook('Libro con ejemplar prestado', 1)
+    const { loanId } = await requestLoan(carla, bookId)
+    await checkoutLoan(staff, loanId)
+    const copy = (await listCopies(bookId))[0]!
+    await expectDomain(async () => setCopyStatus(staff, copy.id, 'lost'), 'in_circulation')
+    await expectDomain(async () => setCopyStatus(staff, copy.id, 'on_loan'), 'invalid_status')
+    await returnLoan(staff, loanId)
+    await setCopyStatus(staff, copy.id, 'maintenance')
+    assert.equal((await listCopies(bookId))[0]?.status, 'maintenance')
   })
 
-  it('no archiva con préstamos en curso ni elimina con historial', () => {
-    const bookId = newBook('Libro con historial', 1)
-    const { loanId } = requestLoan(ana, bookId)
-    expectDomain(() => setBookStatus(bookId, 'archived', staff), 'has_active_loans')
-    checkoutLoan(staff, loanId)
-    returnLoan(staff, loanId)
-    expectDomain(() => deleteBook(bookId, staff), 'has_history')
-    setBookStatus(bookId, 'archived', staff)
-    assert.equal(getBookById(bookId)?.status, 'archived')
-    const fresh = newBook('Libro sin historia', 0)
-    deleteBook(fresh, staff)
-    assert.equal(getBookById(fresh), null)
+  it('no archiva con préstamos en curso ni elimina con historial', async () => {
+    const bookId = await newBook('Libro con historial', 1)
+    const { loanId } = await requestLoan(ana, bookId)
+    await expectDomain(async () => setBookStatus(bookId, 'archived', staff), 'has_active_loans')
+    await checkoutLoan(staff, loanId)
+    await returnLoan(staff, loanId)
+    await expectDomain(async () => deleteBook(bookId, staff), 'has_history')
+    await setBookStatus(bookId, 'archived', staff)
+    assert.equal((await getBookById(bookId))?.status, 'archived')
+    const fresh = await newBook('Libro sin historia', 0)
+    await deleteBook(fresh, staff)
+    assert.equal(await getBookById(fresh), null)
   })
 
-  it('detecta duplicados por ISBN (en cualquiera de sus formas) y por título', () => {
-    createBook({ title: 'Rayuela', authors: ['Julio Cortázar'], categories: [], isbn: '978-84-376-0457-2' }, staff)
-    assert.equal(findPossibleDuplicates({ isbn: '8437604575' }).exact.length, 1)
-    expectDomain(
-      () => createBook({ title: 'Otra', authors: ['X'], categories: [], isbn: '9788437604572' }, staff),
+  it('detecta duplicados por ISBN (en cualquiera de sus formas) y por título', async () => {
+    await createBook({ title: 'Rayuela', authors: ['Julio Cortázar'], categories: [], isbn: '978-84-376-0457-2' }, staff)
+    assert.equal((await findPossibleDuplicates({ isbn: '8437604575' })).exact.length, 1)
+    await expectDomain(
+      async () => createBook({ title: 'Otra', authors: ['X'], categories: [], isbn: '9788437604572' }, staff),
       'duplicate_isbn',
     )
-    const similar = findPossibleDuplicates({ title: 'Rayuela', authors: ['Julio Cortazar'] })
+    const similar = await findPossibleDuplicates({ title: 'Rayuela', authors: ['Julio Cortazar'] })
     assert.equal(similar.similar.length, 1)
-    assert.equal(findPossibleDuplicates({ title: 'Rayuela', authors: ['Otra Persona'] }).similar.length, 0)
-    expectDomain(() => createBook({ title: 'Mal ISBN', authors: ['X'], categories: [], isbn: '1234567890' }, staff), 'invalid_isbn')
+    assert.equal((await findPossibleDuplicates({ title: 'Rayuela', authors: ['Otra Persona'] })).similar.length, 0)
+    await expectDomain(async () => createBook({ title: 'Mal ISBN', authors: ['X'], categories: [], isbn: '1234567890' }, staff), 'invalid_isbn')
   })
 })
 
 describe('Búsqueda en el catálogo', () => {
-  it('admite texto con cualquier orden, ISBN y filtros sin errores de parámetros', () => {
-    createBook({ title: 'El jardín de senderos', authors: ['Jorge Luis Borges'], categories: ['Cuento'], keywords: 'laberintos' }, staff)
+  it('admite texto con cualquier orden, ISBN y filtros sin errores de parámetros', async () => {
+    await createBook({ title: 'El jardín de senderos', authors: ['Jorge Luis Borges'], categories: ['Cuento'], keywords: 'laberintos' }, staff)
     for (const sort of ['relevance', 'title', 'recent', 'popular'] as const) {
-      const result = searchBooks({ q: 'jardin borges', sort })
+      const result = await searchBooks({ q: 'jardin borges', sort })
       assert.equal(result.total, 1, `orden ${sort}`)
       assert.equal(result.items[0]?.title, 'El jardín de senderos')
     }
-    assert.equal(searchBooks({ q: 'laberintos' }).total, 1, 'busca por palabras clave')
-    assert.equal(searchBooks({ q: '978-84-376-0457-2' }).items[0]?.title, 'Rayuela', 'busca por ISBN con guiones')
-    assert.equal(searchBooks({ q: '100% _raro_' }).total, 0, 'escapa los comodines de LIKE')
-    assert.ok(searchBooks({ category: 'cuento', availability: 'available' }).total >= 0)
+    assert.equal((await searchBooks({ q: 'laberintos' })).total, 1, 'busca por palabras clave')
+    assert.equal((await searchBooks({ q: '978-84-376-0457-2' })).items[0]?.title, 'Rayuela', 'busca por ISBN con guiones')
+    assert.equal((await searchBooks({ q: '100% _raro_' })).total, 0, 'escapa los comodines de LIKE')
+    assert.ok((await searchBooks({ category: 'cuento', availability: 'available' })).total >= 0)
   })
 })
 
 describe('Roles', () => {
-  it('no deja la biblioteca sin administración ni permite cambiarse el propio rol', () => {
-    expectDomain(() => setUserRole(admin, admin, 'reader'), 'self')
-    expectDomain(() => setUserStatus({ id: staff, role: 'librarian' }, admin, 'suspended'), 'forbidden')
-    setUserRole(admin, staff, 'admin')
-    setUserRole(staff, admin, 'reader')
-    expectDomain(() => setUserRole(admin, staff, 'reader'))
-    expectDomain(() => setUserRole(staff, staff, 'reader'), 'self')
+  it('no deja la biblioteca sin administración ni permite cambiarse el propio rol', async () => {
+    await expectDomain(async () => setUserRole(admin, admin, 'reader'), 'self')
+    await expectDomain(async () => setUserStatus({ id: staff, role: 'librarian' }, admin, 'suspended'), 'forbidden')
+    await setUserRole(admin, staff, 'admin')
+    await setUserRole(staff, admin, 'reader')
+    await expectDomain(async () => setUserRole(admin, staff, 'reader'))
+    await expectDomain(async () => setUserRole(staff, staff, 'reader'), 'self')
   })
 })

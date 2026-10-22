@@ -11,7 +11,7 @@ export const contentType = 'image/png'
 /** Tarjeta para compartir un libro: su portada sobre el agua y el título en la voz de la biblioteca. */
 export default async function Image({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params
-  const book = getBookBySlug(slug)
+  const book = await getBookBySlug(slug)
   const fonts = await ogFonts()
 
   let cover: string | null = null

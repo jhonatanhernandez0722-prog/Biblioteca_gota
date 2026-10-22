@@ -22,15 +22,15 @@ export function documentHash(doc: LegalDocument): string {
 }
 
 /** Registra (una sola vez) cada versión publicada de los documentos. */
-export function ensureDocumentVersions() {
+export async function ensureDocumentVersions() {
   for (const doc of [...Object.values(LEGAL_DOCUMENTS), ...Object.values(LEGAL_HISTORY).flat()]) {
     const hash = documentHash(doc)
-    const existing = get<{ content_hash: string }>(
+    const existing = await get<{ content_hash: string }>(
       'SELECT content_hash FROM legal_document_versions WHERE slug = ? AND version = ?',
       [doc.slug, doc.version],
     )
     if (!existing) {
-      run('INSERT INTO legal_document_versions (slug, version, title, effective_at, content_hash) VALUES (?, ?, ?, ?, ?)', [
+      await run('INSERT INTO legal_document_versions (slug, version, title, effective_at, content_hash) VALUES (?, ?, ?, ?, ?)', [
         doc.slug,
         doc.version,
         doc.title,
@@ -58,15 +58,15 @@ export interface RecordConsentInput {
 }
 
 /** Debe llamarse dentro de una transacción si acompaña a otra operación. */
-export function recordConsent(input: RecordConsentInput): { eventId: string } {
-  return transaction(() => {
-    ensureDocumentVersions()
+export async function recordConsent(input: RecordConsentInput): Promise<{ eventId: string }> {
+  return await transaction(async () => {
+    await ensureDocumentVersions()
     const doc = LEGAL_DOCUMENTS[input.slug]
-    const previous = get<{ id: number }>(
+    const previous = await get<{ id: number }>(
       'SELECT id FROM consent_records WHERE user_id = ? AND document_slug = ? ORDER BY id DESC LIMIT 1',
       [input.userId, input.slug],
     )
-    const last = get<{ row_hash: string }>('SELECT row_hash FROM consent_records ORDER BY id DESC LIMIT 1')
+    const last = await get<{ row_hash: string }>('SELECT row_hash FROM consent_records ORDER BY id DESC LIMIT 1')
     const prev = last?.row_hash ?? GENESIS
     const fields = {
       event_id: randomUUID(),
@@ -83,7 +83,7 @@ export function recordConsent(input: RecordConsentInput): { eventId: string } {
       supersedes_id: previous?.id ?? null,
       recorded_at: new Date().toISOString(),
     }
-    run(
+    await run(
       `INSERT INTO consent_records (event_id, request_id, user_id, subject_ref, document_slug, document_version,
          document_effective_at, document_hash, consent_type, result, source, supersedes_id, recorded_at, prev_hash, row_hash)
        VALUES (:event_id, :request_id, :user_id, :subject_ref, :document_slug, :document_version, :document_effective_at,
@@ -103,9 +103,9 @@ export interface ConsentState {
 }
 
 /** Último estado de cada documento de la cuenta para un usuario. */
-export function getConsentStates(userId: number): ConsentState[] {
-  return ACCOUNT_CONSENTS.map(({ slug }) => {
-    const row = get<{ result: ConsentResult; document_version: string; recorded_at: string }>(
+export async function getConsentStates(userId: number): Promise<ConsentState[]> {
+  return Promise.all(ACCOUNT_CONSENTS.map(async ({ slug }) => {
+    const row = await get<{ result: ConsentResult; document_version: string; recorded_at: string }>(
       `SELECT result, document_version, recorded_at FROM consent_records
         WHERE user_id = ? AND document_slug = ? ORDER BY id DESC LIMIT 1`,
       [userId, slug],
@@ -117,25 +117,25 @@ export function getConsentStates(userId: number): ConsentState[] {
       recordedAt: row?.recorded_at ?? null,
       current: row?.result === 'accepted' && row.document_version === LEGAL_DOCUMENTS[slug].version,
     }
-  })
+  }))
 }
 
 /** Documentos que el usuario debe (re)aceptar porque no los aceptó o cambió la versión. */
-export function pendingConsents(userId: number): ('terminos' | 'privacidad')[] {
-  return getConsentStates(userId)
+export async function pendingConsents(userId: number): Promise<('terminos' | 'privacidad')[]> {
+  return (await getConsentStates(userId))
     .filter((s) => !s.current)
     .map((s) => s.slug)
 }
 
-export function hasProcessingAuthorization(userId: number): boolean {
-  return getConsentStates(userId).find((s) => s.slug === 'privacidad')?.current ?? false
+export async function hasProcessingAuthorization(userId: number): Promise<boolean> {
+  return (await getConsentStates(userId)).find((s) => s.slug === 'privacidad')?.current ?? false
 }
 
-export function revokeConsent(userId: number, slug: LegalSlug, source: string, requestId?: string) {
-  const state = getConsentStates(userId).find((s) => s.slug === slug)
+export async function revokeConsent(userId: number, slug: LegalSlug, source: string, requestId?: string) {
+  const state = (await getConsentStates(userId)).find((s) => s.slug === slug)
   if (state?.result !== 'accepted') throw new DomainError('No hay una aceptación vigente que revocar.', 'not_accepted')
   const type = ACCOUNT_CONSENTS.find((c) => c.slug === slug)!.type
-  return recordConsent({ userId, slug, type, result: 'revoked', source, requestId })
+  return await recordConsent({ userId, slug, type, result: 'revoked', source, requestId })
 }
 
 export interface ConsentRecordView {
@@ -153,11 +153,11 @@ export interface ConsentRecordView {
   recordedAt: string
 }
 
-export function listConsentRecords(options: { userId?: number; page: number; pageSize: number }) {
+export async function listConsentRecords(options: { userId?: number; page: number; pageSize: number }) {
   const where = options.userId ? 'WHERE user_id = :userId' : ''
   const params: Record<string, number> = options.userId ? { userId: options.userId } : {}
-  const total = get<{ n: number }>(`SELECT COUNT(*) AS n FROM consent_records ${where}`, params)?.n ?? 0
-  const rows = all<Record<string, string | number | null>>(
+  const total = (await get<{ n: number }>(`SELECT COUNT(*) AS n FROM consent_records ${where}`, params))?.n ?? 0
+  const rows = await all<Record<string, string | number | null>>(
     `SELECT * FROM consent_records ${where} ORDER BY id DESC LIMIT :limit OFFSET :offset`,
     { ...params, limit: options.pageSize, offset: (options.page - 1) * options.pageSize },
   )
@@ -179,8 +179,8 @@ export function listConsentRecords(options: { userId?: number; page: number; pag
 }
 
 /** Recalcula la cadena completa. Devuelve el primer registro alterado, si lo hay. */
-export function verifyConsentChain(): { ok: boolean; checked: number; brokenAt: number | null } {
-  const rows = all<Record<string, string | number | null>>('SELECT * FROM consent_records ORDER BY id')
+export async function verifyConsentChain(): Promise<{ ok: boolean; checked: number; brokenAt: number | null }> {
+  const rows = await all<Record<string, string | number | null>>('SELECT * FROM consent_records ORDER BY id')
   const v = (r: Record<string, string | number | null>, k: string) => r[k] ?? null
   let prev = GENESIS
   for (const r of rows) {

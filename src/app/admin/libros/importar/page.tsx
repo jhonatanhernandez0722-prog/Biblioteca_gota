@@ -9,7 +9,7 @@ export const metadata = { title: 'Importar libro' }
 export default async function ImportPage({ searchParams }: { searchParams: Promise<{ q?: string }> }) {
   await requireStaff('/admin/libros/importar')
   const { q } = await searchParams
-  const categories = listCategories().map((c) => ({ slug: c.slug, name: c.name }))
+  const categories = (await listCategories()).map((c) => ({ slug: c.slug, name: c.name }))
   return (
     <>
       <AdminHeader

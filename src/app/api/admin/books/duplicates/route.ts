@@ -19,7 +19,7 @@ export async function GET(request: Request) {
   if (!parsed.success) return json({ exact: [], similar: [] })
   const { isbn, title, authors, excludeId } = parsed.data
   return json(
-    findPossibleDuplicates({
+    await findPossibleDuplicates({
       isbn,
       title,
       authors: authors?.split(/\n|;/).map((a) => a.trim()).filter(Boolean),
