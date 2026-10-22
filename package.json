@@ -14,6 +14,8 @@
     "typecheck": "tsc --noEmit",
     "db:migrate": "tsx scripts/migrate.ts",
     "db:seed": "tsx scripts/seed.ts",
+    "db:import-legacy": "tsx scripts/import-legacy-sqlite.ts",
+    "db:import-covers": "tsx scripts/import-legacy-covers.ts",
     "test": "tsx --test tests/unit/*.test.ts",
     "e2e": "tsx scripts/e2e.ts"
   },
