@@ -1,0 +1,43 @@
+.logo {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--ink);
+  text-decoration: none;
+  border-radius: var(--r-sm);
+}
+
+.text {
+  display: grid;
+  line-height: 1;
+}
+
+.small {
+  font-size: 0.8125rem;
+  font-weight: 650;
+  color: var(--water-ink);
+  letter-spacing: 0.01em;
+  margin-bottom: 3px;
+}
+
+.name {
+  font-family: var(--font-serif);
+  font-size: 1.5rem;
+  letter-spacing: -0.01em;
+}
+
+.paper {
+  color: var(--paper);
+}
+
+.paper .small {
+  color: var(--water);
+}
+
+.lg .small {
+  font-size: 0.9375rem;
+}
+
+.lg .name {
+  font-size: 2rem;
+}

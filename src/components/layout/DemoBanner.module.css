@@ -1,0 +1,27 @@
+.banner {
+  background: var(--water-tint);
+  color: var(--ink);
+  font-size: var(--fs-meta);
+  font-weight: 550;
+}
+
+.inner {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-height: 36px;
+  padding-block: 6px;
+}
+
+.inner svg {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  color: var(--water-ink);
+}
+
+.inner a {
+  color: var(--ink-2);
+  font-weight: 700;
+  text-underline-offset: 3px;
+}

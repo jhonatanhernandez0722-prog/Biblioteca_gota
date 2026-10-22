@@ -1,0 +1,68 @@
+.root {
+  display: none;
+}
+
+.toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-height: 44px;
+  padding: 0 var(--s-4);
+  border: 1.5px solid var(--ink-2);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  color: var(--ink);
+  font-size: var(--fs-small);
+  font-weight: 650;
+}
+
+.toggle svg {
+  width: 20px;
+  height: 20px;
+}
+
+.panel {
+  position: fixed;
+  inset: 68px 0 0;
+  z-index: 45;
+  display: grid;
+  align-content: space-between;
+  gap: var(--s-8);
+  padding: var(--s-6) var(--gutter) var(--s-8);
+  background: var(--paper);
+  overflow-y: auto;
+}
+
+.panel[hidden] {
+  display: none;
+}
+
+.account {
+  display: grid;
+  gap: var(--s-3);
+}
+
+.hello {
+  font-size: var(--fs-small);
+  color: var(--muted);
+  font-weight: 600;
+}
+
+@media (max-width: 960px) {
+  .root {
+    display: block;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .panel:not([hidden]) {
+    animation: menu-in var(--t-base) var(--ease-out);
+  }
+}
+
+@keyframes menu-in {
+  from {
+    opacity: 0;
+    translate: 0 -8px;
+  }
+}

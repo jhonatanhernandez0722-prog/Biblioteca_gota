@@ -1,0 +1,86 @@
+/* Barra de filtros de las pantallas con tabla. */
+.filters {
+  display: grid;
+  grid-template-columns: minmax(200px, 2fr) repeat(auto-fit, minmax(150px, 1fr));
+  gap: var(--s-4);
+  align-items: end;
+  margin-bottom: var(--s-6);
+  padding: var(--s-4);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  border: 1px solid var(--line);
+}
+
+.filters :global(.field label) {
+  font-size: var(--fs-meta);
+}
+
+.filters :global(.input),
+.filters :global(.select) {
+  min-height: 42px;
+}
+
+:global(form[data-enhanced='true']) .apply {
+  display: none;
+}
+
+.bookCell {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr);
+  gap: var(--s-3);
+  align-items: center;
+  min-width: 220px;
+}
+
+.thumb {
+  width: 40px;
+  box-shadow: 0 1px 2px rgb(22 50 79 / 0.2);
+}
+
+.rowTitle {
+  font-weight: 700;
+  color: var(--ink);
+  text-decoration: none;
+}
+
+.rowTitle:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.person {
+  display: grid;
+  gap: 2px;
+  min-width: 160px;
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-4);
+  margin-bottom: var(--s-4);
+}
+
+.search {
+  display: flex;
+  gap: var(--s-2);
+  min-width: min(100%, 360px);
+}
+
+.search :global(.input) {
+  min-height: 42px;
+}
+
+.rowActions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--s-2);
+}
+
+.late {
+  color: var(--danger);
+  font-weight: 700;
+}

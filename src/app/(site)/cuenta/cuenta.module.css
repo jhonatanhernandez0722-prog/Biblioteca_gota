@@ -1,0 +1,259 @@
+.head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--s-6);
+  padding: clamp(32px, 4vw, 56px) 0 var(--s-12);
+}
+
+.headText {
+  display: grid;
+  gap: var(--s-3);
+}
+
+.lead {
+  font-size: var(--fs-lead);
+  color: var(--ink-2);
+}
+
+/* El carné en pequeño: el número que se presenta en el mostrador. */
+.card {
+  display: flex;
+  align-items: center;
+  gap: var(--s-4);
+  padding: var(--s-4) var(--s-6);
+  border-radius: var(--r-md);
+  background: var(--ink);
+  color: var(--paper);
+}
+
+.cardLabel {
+  font-size: var(--fs-meta);
+  font-weight: 650;
+  color: var(--water);
+}
+
+.cardNumber {
+  font-size: 1.125rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  font-variant-numeric: tabular-nums;
+}
+
+.section {
+  margin-bottom: var(--s-16);
+}
+
+.sectionTitle {
+  font-size: var(--fs-h2);
+  margin-bottom: var(--s-6);
+}
+
+/* Ficha de préstamo: el libro, la fecha de devolución sellada y la acción. */
+.slips {
+  display: grid;
+  gap: var(--s-4);
+}
+
+.slip {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 220px 200px;
+  gap: var(--s-6);
+  align-items: center;
+  padding: var(--s-6);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  border: 1px solid var(--line);
+}
+
+.slipOverdue {
+  border-color: color-mix(in srgb, var(--danger) 40%, transparent);
+}
+
+.book {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  gap: var(--s-4);
+  align-items: center;
+}
+
+.bookCover {
+  width: 64px;
+}
+
+.bookTitle {
+  font-size: var(--fs-card);
+  line-height: 1.25;
+}
+
+.bookTitle a {
+  text-decoration: none;
+}
+
+.bookTitle a:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.bookAuthor {
+  font-size: var(--fs-small);
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+.due {
+  display: grid;
+  gap: 2px;
+  padding: var(--s-4);
+  border-radius: var(--r-md);
+  background: var(--water-tint);
+}
+
+.slipOverdue .due {
+  background: var(--danger-tint);
+}
+
+.dueLabel {
+  font-size: var(--fs-meta);
+  font-weight: 650;
+  color: var(--ink-2);
+}
+
+.dueDate {
+  font-family: var(--font-serif);
+  font-size: 1.75rem;
+  line-height: 1.1;
+}
+
+.dueRelative {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-small);
+  font-weight: 650;
+  color: var(--water-ink);
+}
+
+.dueRelative svg {
+  width: 16px;
+  height: 16px;
+}
+
+.slipOverdue .dueRelative {
+  color: var(--danger);
+}
+
+.slipActions {
+  display: grid;
+  gap: var(--s-2);
+  justify-items: start;
+}
+
+.rows {
+  display: grid;
+  gap: var(--s-3);
+}
+
+.row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  gap: var(--s-6);
+  align-items: center;
+  padding: var(--s-4) var(--s-6);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  border: 1px solid var(--line);
+}
+
+.rowStatus {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+  font-size: var(--fs-small);
+  font-weight: 550;
+}
+
+.rowStatus svg {
+  width: 18px;
+  height: 18px;
+  color: var(--water-ink);
+}
+
+@media (max-width: 960px) {
+  .slip {
+    grid-template-columns: minmax(0, 1fr) 200px;
+  }
+
+  .slipActions {
+    grid-column: 1 / -1;
+    grid-auto-flow: column;
+    justify-content: start;
+    align-items: center;
+  }
+
+  .row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--s-3);
+  }
+}
+
+@media (max-width: 600px) {
+  .slip {
+    grid-template-columns: minmax(0, 1fr);
+    padding: var(--s-4);
+  }
+
+  .slipActions {
+    grid-auto-flow: row;
+  }
+}
+
+/* Perfil */
+.profileGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--s-8);
+  align-items: start;
+}
+
+.panel {
+  display: grid;
+  gap: var(--s-6);
+  padding: clamp(24px, 3vw, 40px);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  border: 1px solid var(--line);
+}
+
+.panelTitle {
+  font-size: var(--fs-h3);
+}
+
+.facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--s-4) var(--s-6);
+  margin: 0;
+  padding-top: var(--s-6);
+  border-top: 1px solid var(--line);
+}
+
+.facts dt {
+  font-size: var(--fs-meta);
+  font-weight: 650;
+  color: var(--muted);
+}
+
+.facts dd {
+  margin: 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 860px) {
+  .profileGrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

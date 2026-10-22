@@ -1,0 +1,121 @@
+.calc {
+  --calc-fg: var(--ink);
+  --calc-muted: var(--muted);
+  --drop-1: var(--water-deep);
+  --drop-2: var(--water);
+  --drop-over: var(--warning);
+  --track: var(--line);
+  display: grid;
+  gap: var(--s-6);
+  color: var(--calc-fg);
+}
+
+.ink {
+  --calc-fg: var(--paper);
+  --calc-muted: #b9c7d6;
+  --drop-1: var(--water);
+  --drop-2: #9fd6d1;
+  --drop-over: #e2a35a;
+  --track: rgb(250 248 242 / 0.25);
+}
+
+.label {
+  display: block;
+  font-size: var(--fs-small);
+  font-weight: 650;
+  margin-bottom: var(--s-2);
+}
+
+.sliderRow {
+  display: flex;
+  align-items: center;
+  gap: var(--s-4);
+}
+
+.slider {
+  flex: 1;
+  height: 44px;
+  accent-color: var(--drop-1);
+  background: transparent;
+  cursor: pointer;
+}
+
+.value {
+  min-width: 3ch;
+  font-family: var(--font-serif);
+  font-size: 2rem;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.result {
+  font-size: var(--fs-lead);
+  line-height: 1.5;
+  max-width: 46ch;
+}
+
+.days {
+  font-family: var(--font-serif);
+  font-size: 1.6em;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.drops {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 5px;
+  max-width: 560px;
+}
+
+.drop {
+  display: inline-block;
+  width: 12px;
+  height: 16px;
+  clip-path: path('M6 0C6 0 0 7 0 10.2a6 6 0 0 0 12 0C12 7 6 0 6 0Z');
+  background: var(--drop-1);
+}
+
+.p1 {
+  background: var(--drop-1);
+}
+
+.p2 {
+  background: var(--drop-2);
+}
+
+.over {
+  background: var(--drop-over);
+}
+
+.more {
+  align-self: center;
+  font-size: var(--fs-meta);
+  font-weight: 700;
+  color: var(--calc-muted);
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2) var(--s-6);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--fs-meta);
+  color: var(--calc-muted);
+  font-weight: 550;
+}
+
+.legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .drop {
+    transition: background-color var(--t-base) var(--ease-out);
+  }
+}

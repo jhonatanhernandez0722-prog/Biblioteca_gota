@@ -1,0 +1,27 @@
+.ripples {
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+.ripples ellipse {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .animate ellipse {
+    animation: ripple 1100ms var(--ease-out) both;
+  }
+}
+
+@keyframes ripple {
+  from {
+    opacity: 0;
+    transform: scale(0.35);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}

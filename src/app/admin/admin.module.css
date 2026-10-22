@@ -1,0 +1,21 @@
+.shell {
+  display: grid;
+  grid-template-columns: 248px minmax(0, 1fr);
+  min-height: 100dvh;
+  background: var(--paper);
+}
+
+.main {
+  min-width: 0;
+  padding: clamp(24px, 3vw, 40px) clamp(16px, 3vw, 48px) var(--s-16);
+}
+
+.main:focus {
+  outline: none;
+}
+
+@media (max-width: 960px) {
+  .shell {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

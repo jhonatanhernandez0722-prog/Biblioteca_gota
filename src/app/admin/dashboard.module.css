@@ -1,0 +1,130 @@
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--s-4);
+  margin-bottom: var(--s-8);
+}
+
+.tile {
+  display: grid;
+  gap: 2px;
+  height: 100%;
+  padding: var(--s-4) var(--s-6) var(--s-6);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  color: var(--ink);
+  text-decoration: none;
+  transition: border-color var(--t-fast) var(--ease-out);
+}
+
+.tile:hover {
+  border-color: var(--ink-2);
+}
+
+.tileLabel {
+  font-size: var(--fs-small);
+  font-weight: 650;
+  color: var(--ink-2);
+}
+
+.tileValue {
+  font-family: var(--font-serif);
+  font-size: 2.75rem;
+  line-height: 1.05;
+  font-variant-numeric: tabular-nums;
+}
+
+.tileDetail {
+  font-size: var(--fs-meta);
+  color: var(--muted);
+}
+
+.brand {
+  background: var(--water-tint);
+  border-color: transparent;
+}
+
+.danger {
+  background: var(--danger-tint);
+  border-color: transparent;
+}
+
+.danger .tileValue {
+  color: var(--danger);
+}
+
+.columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--s-6);
+  align-items: start;
+}
+
+.list {
+  display: grid;
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-4);
+  padding: var(--s-3) 0;
+  border-top: 1px solid var(--line);
+}
+
+.item:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.itemText {
+  min-width: 0;
+}
+
+.itemTitle {
+  font-weight: 650;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.itemActions {
+  display: flex;
+  gap: var(--s-2);
+  flex: none;
+}
+
+.empty {
+  color: var(--muted);
+  font-size: var(--fs-small);
+}
+
+.activity {
+  display: grid;
+  gap: var(--s-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--fs-small);
+}
+
+@media (max-width: 1200px) {
+  .tiles {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 900px) {
+  .columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 520px) {
+  .item {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}

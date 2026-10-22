@@ -1,0 +1,30 @@
+.addForm {
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1.4fr) minmax(0, 1fr) auto;
+  gap: var(--s-3);
+  align-items: end;
+}
+
+.addForm > :global(.alert) {
+  grid-column: 1 / -1;
+}
+
+.addForm :global(.input),
+.addForm :global(.select),
+.addForm :global(.btn) {
+  min-height: 42px;
+}
+
+.actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: var(--s-1);
+}
+
+@media (max-width: 760px) {
+  .addForm {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

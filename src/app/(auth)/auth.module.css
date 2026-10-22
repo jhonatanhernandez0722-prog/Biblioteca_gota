@@ -1,0 +1,142 @@
+.shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  min-height: 100dvh;
+}
+
+.brand {
+  position: sticky;
+  top: 0;
+  height: 100dvh;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  gap: var(--s-8);
+  padding: clamp(24px, 4vw, 56px);
+  background: var(--ink);
+  color: var(--paper);
+  overflow: hidden;
+}
+
+.scene {
+  display: grid;
+  place-items: center;
+}
+
+.fan {
+  position: relative;
+  width: min(100%, 380px);
+  aspect-ratio: 380 / 380;
+}
+
+.ripples {
+  position: absolute;
+  left: -14%;
+  width: 128%;
+  top: 70%;
+}
+
+.cover {
+  position: absolute;
+}
+
+.cover0 {
+  z-index: 3;
+  left: 50%;
+  width: 46%;
+  margin-left: -23%;
+  top: 6%;
+}
+
+.cover1 {
+  z-index: 1;
+  left: 4%;
+  width: 34%;
+  top: 18%;
+  rotate: -8deg;
+}
+
+.cover2 {
+  z-index: 2;
+  right: 4%;
+  width: 34%;
+  top: 18%;
+  rotate: 8deg;
+}
+
+.brandText {
+  display: grid;
+  gap: var(--s-3);
+  max-width: 44ch;
+}
+
+.brandTitle {
+  font-family: var(--font-serif);
+  font-size: clamp(1.75rem, 1.3rem + 1.4vw, 2.5rem);
+  line-height: 1.1;
+  color: var(--paper);
+}
+
+.brandLead {
+  color: #d3dde8;
+}
+
+.main {
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: var(--s-8);
+  padding: clamp(32px, 5vw, 72px) var(--gutter);
+}
+
+.main:focus {
+  outline: none;
+}
+
+.formWrap {
+  width: min(100%, 440px);
+}
+
+.back {
+  font-size: var(--fs-small);
+}
+
+/* Cabecera de cada formulario de acceso. */
+.title {
+  font-size: var(--fs-h1);
+  margin-bottom: var(--s-3);
+}
+
+.lead {
+  color: var(--ink-2);
+  margin-bottom: var(--s-8);
+}
+
+.switch {
+  margin-top: var(--s-8);
+  padding-top: var(--s-6);
+  border-top: 1px solid var(--line);
+  font-size: var(--fs-small);
+  text-align: center;
+}
+
+@media (max-width: 900px) {
+  .shell {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .brand {
+    position: static;
+    height: auto;
+    grid-template-rows: auto;
+    padding: var(--s-4) var(--gutter);
+  }
+
+  .scene,
+  .brandText {
+    display: none;
+  }
+
+  .main {
+    align-content: start;
+  }
+}

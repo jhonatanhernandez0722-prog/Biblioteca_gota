@@ -1,0 +1,83 @@
+.head {
+  display: grid;
+  gap: var(--s-3);
+  padding: clamp(32px, 4vw, 56px) 0 var(--s-12);
+}
+
+.lead {
+  font-size: var(--fs-lead);
+  color: var(--ink-2);
+}
+
+.list {
+  display: grid;
+}
+
+/* Cada categoría: su nombre a la izquierda y una tira de portadas que la ilustra. */
+.item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr);
+  gap: var(--s-8);
+  align-items: center;
+  padding: var(--s-8) 0;
+  border-top: 1px solid var(--line);
+}
+
+.item:last-child {
+  border-bottom: 1px solid var(--line);
+}
+
+.text {
+  display: grid;
+  gap: var(--s-2);
+}
+
+.name {
+  font-size: var(--fs-h2);
+}
+
+.name a {
+  text-decoration: none;
+}
+
+.name a:hover {
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 6px;
+}
+
+.count {
+  font-weight: 700;
+  color: var(--water-ink);
+}
+
+.covers {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: var(--s-4);
+}
+
+.coverLink {
+  display: block;
+  border-radius: var(--r-book);
+  transition: transform var(--t-base) var(--ease-out);
+}
+
+.coverLink:hover {
+  transform: translateY(-4px);
+}
+
+@media (max-width: 800px) {
+  .item {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--s-4);
+  }
+
+  .covers {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .covers li:nth-child(5) {
+    display: none;
+  }
+}

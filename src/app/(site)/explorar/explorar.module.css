@@ -1,0 +1,215 @@
+.head {
+  display: grid;
+  gap: var(--s-3);
+  padding: clamp(32px, 4vw, 56px) 0 var(--s-8);
+}
+
+.lead {
+  font-size: var(--fs-lead);
+  color: var(--ink-2);
+  max-width: 60ch;
+}
+
+.layout {
+  display: grid;
+  grid-template-columns: 250px minmax(0, 1fr);
+  grid-template-areas:
+    'search search'
+    'filters results';
+  gap: var(--s-8) clamp(24px, 3.5vw, 56px);
+  align-items: start;
+}
+
+.searchRow {
+  grid-area: search;
+  display: flex;
+  gap: var(--s-3);
+  max-width: 760px;
+}
+
+.searchField {
+  position: relative;
+  flex: 1;
+}
+
+.searchField :global(.input) {
+  padding-left: 46px;
+  min-height: 52px;
+}
+
+.searchIcon {
+  position: absolute;
+  left: 15px;
+  top: 50%;
+  translate: 0 -50%;
+  width: 20px;
+  height: 20px;
+  color: var(--ink-2);
+  pointer-events: none;
+}
+
+.searchRow :global(.btn) {
+  min-height: 52px;
+}
+
+.filters {
+  grid-area: filters;
+  position: sticky;
+  top: 100px;
+}
+
+.summary {
+  display: none;
+}
+
+.filterBody {
+  display: grid;
+  gap: var(--s-8);
+}
+
+.fieldset {
+  display: grid;
+  gap: var(--s-1);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+
+.fieldset legend {
+  margin-bottom: var(--s-2);
+  padding: 0;
+  font-size: var(--fs-small);
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.fieldset :global(.check) {
+  min-height: 36px;
+  align-items: center;
+}
+
+.fieldset :global(.check input) {
+  margin-top: 0;
+}
+
+.option {
+  display: flex;
+  flex: 1;
+  justify-content: space-between;
+  gap: var(--s-3);
+}
+
+.optionCount {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+/* Con JavaScript los filtros se aplican al cambiar; el botón sobra. */
+:global(form[data-enhanced='true']) .apply {
+  display: none;
+}
+
+.results {
+  grid-area: results;
+  min-width: 0;
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3) var(--s-6);
+  margin-bottom: var(--s-6);
+}
+
+.count {
+  font-family: var(--font-sans);
+  font-size: var(--fs-body);
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.sort {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  font-size: var(--fs-small);
+  font-weight: 650;
+}
+
+.sort :global(.select) {
+  min-height: 44px;
+  width: auto;
+}
+
+.active {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2) var(--s-3);
+  margin-bottom: var(--s-8);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--s-12) var(--s-8);
+}
+
+.emptyActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-3);
+}
+
+@media (max-width: 1100px) {
+  .grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 960px) {
+  .layout {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      'search'
+      'filters'
+      'results';
+    gap: var(--s-6);
+  }
+
+  .filters {
+    position: static;
+    border-radius: var(--r-md);
+    background: var(--surface);
+    border: 1px solid var(--line);
+  }
+
+  .summary {
+    display: flex;
+    align-items: center;
+    min-height: 52px;
+    padding: 0 var(--s-4);
+    font-weight: 700;
+    cursor: pointer;
+  }
+
+  .filterBody {
+    padding: var(--s-2) var(--s-4) var(--s-6);
+    gap: var(--s-6);
+  }
+}
+
+@media (max-width: 640px) {
+  .grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--s-8) var(--s-4);
+  }
+
+  .searchRow :global(.btn) {
+    padding-inline: var(--s-4);
+  }
+}

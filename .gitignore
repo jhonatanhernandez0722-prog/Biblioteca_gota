@@ -1,0 +1,31 @@
+# dependencias
+/node_modules
+
+# next.js
+/.next/
+/out/
+next-env.d.ts
+*.tsbuildinfo
+
+# datos locales (base de datos y archivos subidos)
+/data/
+/storage/
+
+# entorno: nunca subir credenciales
+.env
+.env.*
+!.env.example
+
+# capturas y artefactos de verificación
+/.verify/
+
+# sistema
+.DS_Store
+Thumbs.db
+npm-debug.log*
+
+# registros y herramientas locales
+*.log
+/.claude/
+/.agents/
+skills-lock.json

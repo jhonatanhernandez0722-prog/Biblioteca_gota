@@ -1,0 +1,58 @@
+.bar {
+  display: flex;
+  align-items: center;
+  gap: var(--s-1);
+}
+
+.stack {
+  display: grid;
+  gap: var(--s-1);
+}
+
+.link {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 var(--s-3);
+  border-radius: var(--r-sm);
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: var(--ink-2);
+  text-decoration: none;
+  transition: color var(--t-fast) var(--ease-out);
+}
+
+.link:hover {
+  color: var(--ink);
+}
+
+.bar .link[aria-current='page'] {
+  color: var(--ink);
+}
+
+/* La marca del enlace activo es una gota pequeña, no una línea. */
+.bar .link[aria-current='page']::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: 2px;
+  width: 7px;
+  height: 9px;
+  translate: -50% 0;
+  background: var(--water-deep);
+  clip-path: path('M3.5 0C3.5 0 0 4 0 5.8a3.5 3.5 0 0 0 7 0C7 4 3.5 0 3.5 0Z');
+}
+
+.stack .link {
+  width: 100%;
+  min-height: 52px;
+  font-family: var(--font-serif);
+  font-weight: 400;
+  font-size: 1.625rem;
+  color: var(--ink);
+}
+
+.stack .link[aria-current='page'] {
+  color: var(--water-ink);
+}

@@ -1,0 +1,85 @@
+import { createHash, randomBytes } from 'node:crypto'
+import type { SessionUser } from '@/lib/types'
+import { get, run } from '../db'
+
+export const SESSION_COOKIE = 'gg_session'
+const SESSION_DAYS = 30
+const DAY_MS = 86_400_000
+
+export function hashToken(token: string): string {
+  return createHash('sha256').update(token).digest('hex')
+}
+
+/** Crea la sesión. Solo el hash del token se guarda en la base de datos. */
+export function createSessionRecord(userId: number): { token: string; expiresAt: Date } {
+  const token = randomBytes(32).toString('base64url')
+  const expiresAt = new Date(Date.now() + SESSION_DAYS * DAY_MS)
+  run('INSERT INTO sessions (id, user_id, expires_at) VALUES (?, ?, ?)', [
+    hashToken(token),
+    userId,
+    expiresAt.toISOString(),
+  ])
+  return { token, expiresAt }
+}
+
+interface SessionRow {
+  session_id: string
+  expires_at: string
+  last_seen_at: string
+  id: number
+  name: string
+  email: string
+  role: SessionUser['role']
+  status: SessionUser['status']
+  card_number: string
+}
+
+export function findSessionUser(token: string): SessionUser | null {
+  const id = hashToken(token)
+  const row = get<SessionRow>(
+    `SELECT s.id AS session_id, s.expires_at, s.last_seen_at,
+            u.id, u.name, u.email, u.role, u.status, u.card_number
+       FROM sessions s JOIN users u ON u.id = s.user_id
+      WHERE s.id = ?`,
+    [id],
+  )
+  if (!row) return null
+  const now = Date.now()
+  if (new Date(row.expires_at).getTime() <= now) {
+    run('DELETE FROM sessions WHERE id = ?', [id])
+    return null
+  }
+  if (row.status !== 'active') return null
+  // Sesión deslizante: como mucho una escritura por hora.
+  if (now - new Date(row.last_seen_at).getTime() > 3_600_000) {
+    run('UPDATE sessions SET last_seen_at = ?, expires_at = ? WHERE id = ?', [
+      new Date(now).toISOString(),
+      new Date(now + SESSION_DAYS * DAY_MS).toISOString(),
+      id,
+    ])
+  }
+  return {
+    id: row.id,
+    name: row.name,
+    email: row.email,
+    role: row.role,
+    status: row.status,
+    cardNumber: row.card_number,
+  }
+}
+
+export function deleteSession(token: string) {
+  run('DELETE FROM sessions WHERE id = ?', [hashToken(token)])
+}
+
+export function deleteUserSessions(userId: number, exceptToken?: string) {
+  if (exceptToken) {
+    run('DELETE FROM sessions WHERE user_id = ? AND id <> ?', [userId, hashToken(exceptToken)])
+  } else {
+    run('DELETE FROM sessions WHERE user_id = ?', [userId])
+  }
+}
+
+export function purgeExpiredSessions() {
+  run('DELETE FROM sessions WHERE expires_at <= ?', [new Date().toISOString()])
+}
